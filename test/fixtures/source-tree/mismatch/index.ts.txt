@@ -1,0 +1,3 @@
+import { deleteMemoryFiles } from "./storage.js"
+
+export const cleanup = deleteMemoryFiles

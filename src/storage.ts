@@ -72,6 +72,11 @@ export function memoryDir(): string {
   return join(dataRoot(), "memory-persistent", "sessions")
 }
 
+/** The build record written on every activation, next to the sessions directory. */
+export function buildInfoPath(): string {
+  return join(dataRoot(), "memory-persistent", "build.json")
+}
+
 export function memoryPath(sessionID: string): string {
   const id = sanitizeSessionID(sessionID)
   return join(memoryDir(), `${id}.json`)

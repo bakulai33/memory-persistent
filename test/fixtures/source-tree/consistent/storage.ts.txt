@@ -1,0 +1,7 @@
+export function readThing(): string {
+  return "read"
+}
+
+export async function writeThing(): Promise<string> {
+  return "write"
+}

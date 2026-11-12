@@ -1,0 +1,4 @@
+import { readThing, writeThing } from "./storage.js"
+import { helper } from "./extra.js"
+
+export const run = (): string => helper(readThing() + writeThing())

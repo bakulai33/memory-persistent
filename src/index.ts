@@ -3,6 +3,7 @@ import type { Context } from "@opencode/plugin/effect/plugin"
 import { Cause, Effect, Exit, Schema, Stream } from "effect"
 import {
   addActivity,
+  buildInfoPath,
   copyMemory,
   deleteMemoryFiles,
   listMemoryFiles,
@@ -37,7 +38,11 @@ import { isImportantPrompt, extractUserExcerpt } from "./heuristics.js"
 import { redact } from "./redact.js"
 import { classifyToolCall } from "./metadata.js"
 import { defaultTokenCounter, truncateToTokenBudget } from "./tokenizer.js"
-import { readFileSync } from "node:fs"
+import { checkSourceTree, sourceHash } from "./selfcheck.js"
+import { BUILD, SCHEMA_VERSION } from "./build.js"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 
 const StringArray = Schema.Array(Schema.String)
 
@@ -83,6 +88,53 @@ function textResult(text: string) {
 export default define({
   id: "memory-persistent",
   effect: Effect.fn(function* (ctx: Context) {
+    const dir = dirname(fileURLToPath(import.meta.url))
+
+    // A module graph that fails to link makes OpenCode cache the rejection and keep
+    // running the previous generation forever. Refuse activation loudly instead.
+    const mismatches = checkSourceTree(dir)
+    if (mismatches.length > 0) {
+      for (const mismatch of mismatches) {
+        console.error(
+          `[memory-persistent] FATAL source-tree-inconsistent importer=${mismatch.importer} from=${mismatch.from} missing=${mismatch.missing.join(",")}`,
+        )
+      }
+      return
+    }
+
+    // Record this generation's source hash so the next activation can spot a stale
+    // process. A missing or unreadable build record is not an error.
+    const hash = sourceHash(dir)
+    try {
+      const path = buildInfoPath()
+      let previous: string | null = null
+      try {
+        const parsed = JSON.parse(readFileSync(path, "utf8")) as { sourceHash?: unknown }
+        if (typeof parsed.sourceHash === "string") previous = parsed.sourceHash
+      } catch {}
+      if (previous !== null && previous !== hash) {
+        console.error(`[memory-persistent] drift source-changed-since-start ${previous} -> ${hash}`)
+      }
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(
+        path,
+        JSON.stringify(
+          {
+            build: BUILD,
+            schema: SCHEMA_VERSION,
+            sourceHash: hash,
+            pid: process.pid,
+            startedAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      )
+    } catch (error) {
+      console.error(`[memory-persistent] build record could not be written: ${error}`)
+    }
+
     const options = (ctx.options ?? {}) as Record<string, any>
     const budget = typeof options.tokenBudget === "number" ? options.tokenBudget : DEFAULT_TOKEN_BUDGET
     const sweepEnabled = options.sweepEnabled !== false
