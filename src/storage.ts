@@ -356,7 +356,7 @@ export function migrateV2(v2: MemoryFileV2): MemoryFile {
     notes: v2.notes ?? [],
     pendingTurns: v2.pendingTurns ?? [],
     pendingActivity: v2.pendingActivity ?? [],
-    needsConsolidation: v2.needsConsolidation ?? false,
+    needsConsolidation: v2.needsConsolidation === true,
     consolidation,
     updatedAt: v2.updatedAt ?? new Date().toISOString(),
   }
@@ -371,7 +371,7 @@ export function migrateV1(v1: MemoryFileV1): MemoryFile {
     notes: v1.notes ?? [],
     pendingTurns: [],
     pendingActivity: [],
-    needsConsolidation: v1.needsConsolidation ?? false,
+    needsConsolidation: v1.needsConsolidation === true,
     lastAttemptAt: v1.lastAttemptAt ?? null,
     lastSuccessAt: null,
     lastFailure: null,

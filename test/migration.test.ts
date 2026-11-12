@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { migrateV1, migrateV2, readMemory, memoryDir, type MemoryFileV1, type MemoryFileV2 } from "../src/storage"
+import { canConsolidate } from "../src/consolidation"
 
 const v1 = (overrides: Partial<MemoryFileV1> = {}): MemoryFileV1 => ({
   version: 1,
@@ -163,5 +164,59 @@ describe("readMemory migration", () => {
     expect(memory.version).toBe(3)
     expect(memory.pendingTurns.length).toBe(1)
     expect(memory.pendingTurns[0]?.userExcerpt).toBe("a real question")
+  })
+})
+
+describe("migration needsConsolidation coercion", () => {
+  test("v2 non-boolean needsConsolidation becomes boolean", () => {
+    for (const value of [1, "true"]) {
+      const v2: MemoryFileV2 = {
+        version: 2,
+        sessionID: "ses_v2",
+        parentSnapshotFrom: null,
+        summary: "",
+        notes: [],
+        pendingTurns: [],
+        pendingActivity: [],
+        needsConsolidation: value as any,
+        lastAttemptAt: new Date(Date.now() - 6 * 60_000).toISOString(),
+        lastSuccessAt: null,
+        lastFailure: null,
+        failureCount: 0,
+        updatedAt: new Date().toISOString(),
+      }
+      const migrated = migrateV2(v2)
+      expect(typeof migrated.needsConsolidation).toBe("boolean")
+      expect(migrated.needsConsolidation).toBe(false)
+    }
+  })
+
+  test("v1 non-boolean needsConsolidation becomes boolean", () => {
+    for (const value of [1, "true"]) {
+      const migrated = migrateV1(v1({ needsConsolidation: value as any }))
+      expect(typeof migrated.needsConsolidation).toBe("boolean")
+      expect(migrated.needsConsolidation).toBe(false)
+    }
+  })
+
+  test("migrated file is not permanently blocked", () => {
+    const v2: MemoryFileV2 = {
+      version: 2,
+      sessionID: "ses_v2b",
+      parentSnapshotFrom: null,
+      summary: "",
+      notes: [],
+      pendingTurns: [],
+      pendingActivity: [],
+      needsConsolidation: 1 as any,
+      lastAttemptAt: new Date(Date.now() - 6 * 60_000).toISOString(),
+      lastSuccessAt: null,
+      lastFailure: null,
+      failureCount: 0,
+      updatedAt: new Date().toISOString(),
+    }
+    const migrated = migrateV2(v2)
+    migrated.needsConsolidation = true
+    expect(canConsolidate(migrated)).toBe(true)
   })
 })
