@@ -277,6 +277,49 @@ export async function deleteMemoryFiles(sessionID: string): Promise<void> {
 }
 
 /** Lists the memory files on disk, including the corrupt backups that a failed parse left behind. */
+export async function repairPermissions(dir?: string): Promise<{ files: number; dirs: number }> {
+  const target = dir ?? join(dataRoot(), "memory-persistent")
+  let files = 0
+  let dirs = 0
+
+  // On a fresh install the standard directories may not exist yet; create them
+  // so their permissions can be repaired (and enforced) at activation.
+  if (dir === undefined) {
+    const sessions = join(target, "sessions")
+    await mkdir(target, { recursive: true }).catch(() => {})
+    await mkdir(sessions, { recursive: true }).catch(() => {})
+  }
+
+  async function walk(current: string): Promise<void> {
+    try {
+      await chmod(current, 0o700)
+      dirs += 1
+    } catch {}
+    let entries
+    try {
+      entries = await readdir(current, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const full = join(current, entry.name)
+      if (entry.isDirectory()) {
+        await walk(full)
+      } else if (entry.isFile() && entry.name.endsWith(".json")) {
+        try {
+          await chmod(full, 0o600)
+          files += 1
+        } catch {}
+      }
+    }
+  }
+
+  try {
+    await walk(target)
+  } catch {}
+  return { files, dirs }
+}
+
 export async function listMemoryFiles(): Promise<MemoryFileEntry[]> {
   const dir = memoryDir()
   let entries: string[]

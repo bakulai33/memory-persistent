@@ -8,6 +8,7 @@ import {
   deleteMemoryFiles,
   listMemoryFiles,
   markDeleted,
+  repairPermissions,
   sanitizeSessionID,
   updateMemory,
 } from "./storage.js"
@@ -340,6 +341,15 @@ export default define({
         return Effect.void
       }),
     )
+
+    // Repair file/directory permissions for files written by older versions.
+    const runRepair = Effect.promise(() => repairPermissions()).pipe(
+      Effect.catchCause((cause) => {
+        console.error(`[memory-persistent] permission repair failed: ${Cause.pretty(cause)}`)
+        return Effect.void
+      }),
+    )
+    yield* Effect.forkScoped(runRepair, { startImmediately: true })
 
     if (sweepEnabled) {
       // Startup sweep, forked into the plugin scope so it never blocks activation.
