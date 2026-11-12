@@ -83,6 +83,16 @@ describe("consolidation state", () => {
     expect(backoffMs(50)).toBe(600_000)
   })
 
+  test("finishFailure guards non-finite consecutiveFailures", () => {
+    const m = emptyMemory("s3")
+    beginAttempt(m, "attempt-nan")
+    m.consolidation.consecutiveFailures = NaN as any
+    const ok = finishFailure(m, "attempt-nan", "boom")
+    expect(ok).toBe(true)
+    expect(Number.isFinite(m.consolidation.consecutiveFailures)).toBe(true)
+    expect(m.consolidation.consecutiveFailures).toBe(1)
+  })
+
   test("backoffMs is finite for garbage input", () => {
     expect(Number.isFinite(backoffMs(NaN))).toBe(true)
     expect(Number.isFinite(backoffMs(-1))).toBe(true)

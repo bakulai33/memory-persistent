@@ -159,6 +159,7 @@ export async function readMemory(sessionID: string): Promise<MemoryFile> {
         notes: parsed.notes ?? [],
         pendingTurns: parsed.pendingTurns ?? [],
         pendingActivity: parsed.pendingActivity ?? [],
+        needsConsolidation: parsed.needsConsolidation === true,
         consolidation: normalizeConsolidation(parsed.consolidation),
       }
     } else {

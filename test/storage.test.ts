@@ -16,7 +16,7 @@ import {
   addActivity,
 } from "../src/storage"
 import { appendNote } from "../src/memory"
-import { canConsolidate } from "../src/consolidation"
+import { canConsolidate, emptyConsolidation } from "../src/consolidation"
 
 describe("storage", () => {
   let dir: string
@@ -232,6 +232,64 @@ describe("storage", () => {
     expect(m.consolidation.deferrals).toBe(0)
     expect(m.consolidation.consolidatedNotes).toBe(0)
     expect(Number.isFinite(m.consolidation.consecutiveFailures)).toBe(true)
+    expect(canConsolidate(m)).toBe(true)
+  })
+
+  test("non-boolean needsConsolidation is normalized to false", async () => {
+    for (const value of [1, "true"]) {
+      const file = {
+        version: 3,
+        sessionID: `ses_nc_${String(value)}`,
+        parentSnapshotFrom: null,
+        build: "0.4.0",
+        summary: "",
+        summaryFacts: "",
+        summaryNarrative: "",
+        notes: [],
+        pendingTurns: [],
+        pendingActivity: [],
+        needsConsolidation: value,
+        consolidation: emptyConsolidation(),
+        updatedAt: new Date().toISOString(),
+      }
+      await writeMemory(`ses_nc_${String(value)}`, file as any)
+      const m = await readMemory(`ses_nc_${String(value)}`)
+      expect(m.needsConsolidation).toBe(false)
+    }
+  })
+
+  test("running attempt without startedAt is recovered", async () => {
+    const lastAttemptAt = new Date(Date.now() - 6 * 60_000).toISOString()
+    const file = {
+      version: 3,
+      sessionID: "ses_nostart",
+      parentSnapshotFrom: null,
+      build: "0.4.0",
+      summary: "",
+      summaryFacts: "",
+      summaryNarrative: "",
+      notes: [],
+      pendingTurns: [],
+      pendingActivity: [],
+      needsConsolidation: true,
+      consolidation: {
+        state: "running",
+        attemptId: "attempt-nostart",
+        startedAt: null,
+        finishedAt: null,
+        error: null,
+        consecutiveFailures: 0,
+        deferrals: 0,
+        deferredSince: null,
+        lastAttemptAt,
+        consolidatedNotes: 0,
+      },
+      updatedAt: new Date().toISOString(),
+    }
+    await writeMemory("ses_nostart", file as any)
+    const m = await readMemory("ses_nostart")
+    expect(m.consolidation.state).toBe("failed")
+    expect(m.consolidation.consecutiveFailures).toBe(1)
     expect(canConsolidate(m)).toBe(true)
   })
 })

@@ -42,10 +42,8 @@ export const RUNNING_TIMEOUT_MS = 5 * 60_000
 export function recoverStaleAttempt(m: MemoryFile, now: number = Date.now()): boolean {
   const c = m.consolidation
   if (c.state !== "running") return false
-  if (!c.startedAt) return false
-  const started = Date.parse(c.startedAt)
-  if (Number.isNaN(started)) return false
-  if (now - started < RUNNING_TIMEOUT_MS) return false
+  const started = c.startedAt ? Date.parse(c.startedAt) : NaN
+  if (!Number.isNaN(started) && now - started < RUNNING_TIMEOUT_MS) return false
   c.state = "failed"
   c.finishedAt = new Date(now).toISOString()
   c.error = "stale attempt (timeout)"
@@ -85,6 +83,7 @@ export function finishFailure(m: MemoryFile, attemptId: string, error: string, n
   c.attemptId = null
   c.finishedAt = new Date(now).toISOString()
   c.error = String(error).slice(0, 200)
+  if (!Number.isFinite(c.consecutiveFailures)) c.consecutiveFailures = 0
   c.consecutiveFailures += 1
   return true
 }
