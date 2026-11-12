@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import type { MemoryFile } from "./storage.js"
+import { buildConsolidationInput, estimatePromptTokens } from "./memory.js"
 
 export interface Consolidation {
   state: "idle" | "running" | "failed"
@@ -106,8 +107,30 @@ export function canConsolidate(m: MemoryFile, now: number = Date.now()): boolean
   return retryDelayMs(m, now) === 0
 }
 
+export function countNewNotes(m: MemoryFile): number {
+  const consolidated = Number.isFinite(m.consolidation?.consolidatedNotes)
+    ? m.consolidation.consolidatedNotes
+    : 0
+  const total = Number.isFinite(m.notes?.length) ? m.notes.length : 0
+  const diff = total - consolidated
+  return Number.isFinite(diff) ? diff : 0
+}
+
 export function shouldConsolidate(m: MemoryFile, now: number = Date.now()): boolean {
-  return m.needsConsolidation && m.consolidation.state !== "running"
+  if (m.needsConsolidation !== true) return false
+  if (m.consolidation?.state === "running") return false
+  if (m.pendingTurns.length >= 4) return true
+  if (m.pendingActivity.length >= 8) return true
+  if (countNewNotes(m) >= 1) {
+    const prompt = buildConsolidationInput(m, 12000)
+    if (estimatePromptTokens(prompt) >= 500) return true
+  }
+  const lastAttemptAt = m.consolidation?.lastAttemptAt
+  if (typeof lastAttemptAt === "string") {
+    const elapsed = now - Date.parse(lastAttemptAt)
+    if (Number.isFinite(elapsed) && elapsed > 10 * 60_000) return true
+  }
+  return false
 }
 
 export const DEFERRAL_FALLBACK_COUNT = 3

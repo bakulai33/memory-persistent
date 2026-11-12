@@ -28,6 +28,7 @@ import {
 } from "./memory.js"
 import {
   canConsolidate,
+  shouldConsolidate,
   retryDelayMs,
   beginAttempt,
   finishSuccess,
@@ -374,6 +375,7 @@ export default define({
               collect: async () =>
                 (
                   await updateMemory(sessionID, (m) => {
+                    if (!shouldConsolidate(m)) return null
                     if (!canConsolidate(m)) return null
                     beginAttempt(m, deltaAttemptId())
                     return collectDelta(m)
