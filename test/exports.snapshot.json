@@ -1,5 +1,7 @@
 {
-  "src/index.ts": [],
+  "src/index.ts": [
+    "default"
+  ],
   "src/build.ts": [
     "BUILD",
     "SCHEMA_VERSION"
