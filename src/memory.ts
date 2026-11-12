@@ -9,6 +9,8 @@ export interface Delta {
   readonly attemptId: string
   readonly turnIds: string[]
   readonly activityIds: string[]
+  /** Turn excerpts, so the prompt can carry the quotes and not just their ids. */
+  readonly turns: readonly { readonly turnId: string; readonly excerpt: string }[]
   readonly notes: readonly MemoryNote[]
   readonly summary: string
   readonly facts: string
@@ -171,20 +173,21 @@ export function collectDelta(m: MemoryFile): Delta {
   }
   const attemptId = m.consolidation.attemptId as string
   const turnIds = m.pendingTurns.map((t) => t.turnId)
+  const turns = m.pendingTurns.map((t) => ({ turnId: t.turnId, excerpt: t.userExcerpt }))
   const activityIds = m.pendingActivity.map((a) => a.id)
   const notes = [...m.notes] as readonly MemoryNote[]
   const summary = m.summaryFacts ?? ""
   const facts = m.pendingActivity
     .map((a) => `- ${a.kind}: ${a.target}${a.count > 1 ? ` (${a.count}x)` : ""}`)
     .join("\n")
-  return { attemptId, turnIds, activityIds, notes, summary, facts }
+  return { attemptId, turnIds, turns, activityIds, notes, summary, facts }
 }
 
 export function buildConsolidationPrompt(delta: Delta, budget: number): string {
   const parts: string[] = []
   if (delta.summary) parts.push(`CURRENT SUMMARY:\n${delta.summary}`)
   if (delta.facts) parts.push(`FACTS:\n${delta.facts}`)
-  if (delta.turnIds.length) parts.push(`CONVERSATION:\n${delta.turnIds.map((id) => `- ${id}`).join("\n")}`)
+  if (delta.turns.length) parts.push(`CONVERSATION:\n${delta.turns.map((t) => `- ${t.excerpt}`).join("\n")}`)
   if (delta.notes.length) parts.push(`MANUAL NOTES:\n${delta.notes.map((n) => `- ${n.text}`).join("\n")}`)
   parts.push(`Tulis ringkasan final di bawah ${budget} token. Jangan sertakan output mentah.`)
   return parts.join("\n\n")
@@ -197,11 +200,9 @@ export function applyDelta(m: MemoryFile, delta: Delta, narrative: string): void
   m.pendingTurns = m.pendingTurns.filter((t) => !turnSet.has(t.turnId))
   m.pendingActivity = m.pendingActivity.filter((a) => !activitySet.has(a.id))
   const text = narrative.trim()
-  if (text) {
-    m.summary = text
-    m.summaryFacts = text
-    m.summaryNarrative = text
-  }
+  m.summaryFacts = delta.facts
+  m.summaryNarrative = text
+  m.summary = [delta.facts, text].filter(Boolean).join("\n\n")
   m.consolidation.consolidatedNotes = m.notes.length
   if (m.pendingTurns.length === 0 && m.pendingActivity.length === 0) {
     m.needsConsolidation = false

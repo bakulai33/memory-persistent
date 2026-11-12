@@ -55,6 +55,10 @@ describe("delta", () => {
     beginAttempt(m, "attempt-1")
     const delta = collectDelta(m)
     expect(delta.turnIds).toEqual(["t1", "t2"])
+    expect(delta.turns).toEqual([
+      { turnId: "t1", excerpt: "hello" },
+      { turnId: "t2", excerpt: "world" },
+    ])
     expect(delta.activityIds).toEqual(m.pendingActivity.map((a) => a.id))
     expect(delta.summary).toBe("old facts")
     expect(delta.facts).toContain("- file: src/index.ts")
@@ -64,15 +68,17 @@ describe("delta", () => {
     expect(delta.notes).toEqual(m.notes)
   })
 
-  test("buildConsolidationPrompt carries the delta sections and the budget", () => {
+  test("buildConsolidationPrompt carries turn excerpts, not turn ids", () => {
     const m = emptyMemory("s5")
     m.summaryFacts = "old facts"
     beginAttempt(m, "attempt-prompt")
-    addPendingTurn(m, turn("t1", "hello"))
+    addPendingTurn(m, turn("turn-id-9", "the user wants cobalt widgets"))
     addActivity(m, { kind: "file", target: "src/index.ts" })
     appendNote(m, "remember this")
     const delta = collectDelta(m)
     const prompt = buildConsolidationPrompt(delta, 900)
+    expect(prompt).toContain("the user wants cobalt widgets")
+    expect(prompt).not.toContain("turn-id-9")
     expect(prompt).toContain("old facts")
     expect(prompt).toContain("- file: src/index.ts")
     expect(prompt).toContain("remember this")
@@ -85,12 +91,16 @@ describe("delta", () => {
     beginAttempt(m, "a1")
     addPendingTurn(m, turn("t1", "a"))
     addPendingTurn(m, turn("t2", "b"))
+    addActivity(m, { kind: "file", target: "src/index.ts" })
     const delta = collectDelta(m)
     addPendingTurn(m, turn("t3", "c"))
     applyDelta(m, delta, "narrative")
     expect(m.pendingTurns.map((t) => t.turnId)).toEqual(["t3"])
-    expect(m.summary).toBe("narrative")
+    expect(m.summaryFacts).toBe("- file: src/index.ts")
     expect(m.summaryNarrative).toBe("narrative")
+    expect(m.summary).toContain("- file: src/index.ts")
+    expect(m.summary).toContain("narrative")
+    expect(m.summaryFacts).not.toContain("narrative")
   })
 
   test("applyDelta keeps activity added during the model call", () => {
