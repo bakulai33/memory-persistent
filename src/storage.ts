@@ -2,6 +2,9 @@ import { mkdir, readdir, readFile, rename, rm, writeFile, chmod } from "node:fs/
 import { dirname, join } from "node:path"
 import { homedir } from "node:os"
 import { randomUUID } from "node:crypto"
+import { BUILD } from "./build.js"
+import { emptyConsolidation } from "./consolidation.js"
+import type { Consolidation } from "./consolidation.js"
 
 export interface MemoryNote {
   id: string
@@ -29,18 +32,18 @@ export interface ActivityEntry {
 }
 
 export interface MemoryFile {
-  version: 2
+  version: 3
   sessionID: string
   parentSnapshotFrom: string | null
+  build: string
   summary: string
+  summaryFacts: string
+  summaryNarrative: string
   notes: MemoryNote[]
   pendingTurns: PendingTurn[]
   pendingActivity: ActivityEntry[]
   needsConsolidation: boolean
-  lastAttemptAt: string | null
-  lastSuccessAt: string | null
-  lastFailure: string | null
-  failureCount: number
+  consolidation: Consolidation
   updatedAt: string
 }
 
@@ -95,18 +98,18 @@ async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 export function emptyMemory(sessionID: string, parentSnapshotFrom: string | null = null): MemoryFile {
   const now = new Date().toISOString()
   return {
-    version: 2,
+    version: 3,
     sessionID,
     parentSnapshotFrom,
+    build: BUILD,
     summary: "",
+    summaryFacts: "",
+    summaryNarrative: "",
     notes: [],
     pendingTurns: [],
     pendingActivity: [],
     needsConsolidation: false,
-    lastAttemptAt: null,
-    lastSuccessAt: null,
-    lastFailure: null,
-    failureCount: 0,
+    consolidation: emptyConsolidation(),
     updatedAt: now,
   }
 }
@@ -116,17 +119,21 @@ export async function readMemory(sessionID: string): Promise<MemoryFile> {
   const path = memoryPath(id)
   try {
     const raw = await readFile(path, "utf8")
-    const parsed = JSON.parse(raw) as MemoryFile | MemoryFileV1
+    const parsed = JSON.parse(raw) as MemoryFile | MemoryFileV1 | MemoryFileV2
     if (parsed.sessionID !== id) throw new Error("bad schema")
-    if (parsed.version === 1) return migrateV1(parsed)
-    if (parsed.version !== 2) throw new Error("bad schema")
+    if (parsed.version === 1) return migrateV1(parsed as MemoryFileV1)
+    if (parsed.version === 2) return migrateV2(parsed as MemoryFileV2)
+    if (parsed.version !== 3) throw new Error("bad schema")
     return {
       ...parsed,
+      build: parsed.build ?? BUILD,
+      summary: parsed.summary ?? "",
+      summaryFacts: parsed.summaryFacts ?? "",
+      summaryNarrative: parsed.summaryNarrative ?? "",
+      notes: parsed.notes ?? [],
       pendingTurns: parsed.pendingTurns ?? [],
       pendingActivity: parsed.pendingActivity ?? [],
-      lastSuccessAt: parsed.lastSuccessAt ?? null,
-      lastFailure: parsed.lastFailure ?? null,
-      failureCount: parsed.failureCount ?? 0,
+      consolidation: parsed.consolidation ?? emptyConsolidation(),
     }
   } catch (err: any) {
     if (err?.code === "ENOENT") return emptyMemory(id)
@@ -257,6 +264,22 @@ export function addActivity(memory: MemoryFile, entry: Omit<ActivityEntry, "id" 
   return true
 }
 
+export interface MemoryFileV2 {
+  version: 2
+  sessionID: string
+  parentSnapshotFrom: string | null
+  summary: string
+  notes: MemoryNote[]
+  pendingTurns: PendingTurn[]
+  pendingActivity: ActivityEntry[]
+  needsConsolidation: boolean
+  lastAttemptAt: string | null
+  lastSuccessAt: string | null
+  lastFailure: string | null
+  failureCount: number
+  updatedAt: string
+}
+
 export interface MemoryFileV1 {
   version: 1
   sessionID: string
@@ -283,13 +306,46 @@ const V1_TOOL_PREFIX = /^(shell|bash|edit|write|patch|apply_patch|multiedit): /
  * Converts a v1 memory file to v2: conversation quotes stay, tool-derived turns become
  * activity entries, and the trivial tool noise is dropped.
  */
+export function migrateV2(v2: MemoryFileV2): MemoryFile {
+  const summary = v2.summary ?? ""
+  const consolidation = emptyConsolidation()
+  consolidation.lastAttemptAt = v2.lastAttemptAt ?? null
+  consolidation.consecutiveFailures = v2.failureCount ?? 0
+  consolidation.error = v2.lastFailure ?? null
+  consolidation.state = v2.lastFailure ? "failed" : "idle"
+  return {
+    version: 3,
+    sessionID: v2.sessionID,
+    parentSnapshotFrom: v2.parentSnapshotFrom,
+    build: "0.3.0",
+    summary,
+    summaryFacts: summary,
+    summaryNarrative: "",
+    notes: v2.notes ?? [],
+    pendingTurns: v2.pendingTurns ?? [],
+    pendingActivity: v2.pendingActivity ?? [],
+    needsConsolidation: v2.needsConsolidation ?? false,
+    consolidation,
+    updatedAt: v2.updatedAt ?? new Date().toISOString(),
+  }
+}
+
 export function migrateV1(v1: MemoryFileV1): MemoryFile {
-  const migrated = emptyMemory(v1.sessionID, v1.parentSnapshotFrom)
-  migrated.summary = v1.summary ?? ""
-  migrated.notes = v1.notes ?? []
-  migrated.needsConsolidation = v1.needsConsolidation ?? false
-  migrated.lastAttemptAt = v1.lastAttemptAt ?? null
-  migrated.updatedAt = v1.updatedAt ?? migrated.updatedAt
+  const migrated: MemoryFileV2 = {
+    version: 2,
+    sessionID: v1.sessionID,
+    parentSnapshotFrom: v1.parentSnapshotFrom,
+    summary: v1.summary ?? "",
+    notes: v1.notes ?? [],
+    pendingTurns: [],
+    pendingActivity: [],
+    needsConsolidation: v1.needsConsolidation ?? false,
+    lastAttemptAt: v1.lastAttemptAt ?? null,
+    lastSuccessAt: null,
+    lastFailure: null,
+    failureCount: 0,
+    updatedAt: v1.updatedAt ?? new Date().toISOString(),
+  }
 
   for (const turn of v1.pendingTurns ?? []) {
     const excerpt = turn.userExcerpt ?? ""
@@ -310,14 +366,15 @@ export function migrateV1(v1: MemoryFileV1): MemoryFile {
     const target = separator === -1 ? "" : excerpt.slice(separator + 2)
     if (!target) continue
     if (V1_FILE_TOOLS.has(tool)) {
-      addActivity(migrated, { kind: "file", target })
+      addActivity(migrated as any, { kind: "file", target })
       continue
     }
     if (V1_SHELL_TOOLS.has(tool) && V1_ALLOWED_COMMANDS.has(target)) {
-      addActivity(migrated, { kind: "command", target })
+      addActivity(migrated as any, { kind: "command", target })
     }
   }
-  return migrated
+
+  return migrateV2(migrated)
 }
 
 const V1_FILE_TOOLS = new Set(["write", "edit", "patch", "apply_patch", "multiedit"])

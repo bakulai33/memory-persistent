@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { migrateV1, readMemory, memoryDir, type MemoryFileV1 } from "../src/storage"
+import { migrateV1, migrateV2, readMemory, memoryDir, type MemoryFileV1, type MemoryFileV2 } from "../src/storage"
 
 const v1 = (overrides: Partial<MemoryFileV1> = {}): MemoryFileV1 => ({
   version: 1,
@@ -92,14 +92,15 @@ describe("migrateV1", () => {
     expect(migrated.summary).toBe("kept summary")
     expect(migrated.notes.length).toBe(1)
     expect(migrated.needsConsolidation).toBe(true)
-    expect(migrated.version).toBe(2)
+    expect(migrated.version).toBe(3)
   })
 
-  test("gives the migrated file the retry fields", () => {
+  test("gives the migrated file the consolidation state", () => {
     const migrated = migrateV1(v1())
-    expect(migrated.lastSuccessAt).toBe(null)
-    expect(migrated.lastFailure).toBe(null)
-    expect(migrated.failureCount).toBe(0)
+    expect(migrated.consolidation.lastAttemptAt).toBe(null)
+    expect(migrated.consolidation.error).toBe(null)
+    expect(migrated.consolidation.consecutiveFailures).toBe(0)
+    expect(migrated.consolidation.state).toBe("idle")
   })
 })
 
@@ -119,7 +120,33 @@ describe("readMemory migration", () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  test("reads a v1 file and returns it as v2", async () => {
+  test("migrateV2 keeps old summary in summaryFacts", () => {
+    const v2: MemoryFileV2 = {
+      version: 2,
+      sessionID: "ses_v2",
+      parentSnapshotFrom: null,
+      summary: "old summary",
+      notes: [],
+      pendingTurns: [],
+      pendingActivity: [],
+      needsConsolidation: false,
+      lastAttemptAt: "2026-01-01T00:00:00.000Z",
+      lastSuccessAt: null,
+      lastFailure: "boom",
+      failureCount: 2,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }
+    const migrated = migrateV2(v2)
+    expect(migrated.version).toBe(3)
+    expect(migrated.summaryFacts).toBe("old summary")
+    expect(migrated.build).toBe("0.3.0")
+    expect(migrated.consolidation.lastAttemptAt).toBe("2026-01-01T00:00:00.000Z")
+    expect(migrated.consolidation.error).toBe("boom")
+    expect(migrated.consolidation.consecutiveFailures).toBe(2)
+    expect(migrated.consolidation.state).toBe("failed")
+  })
+
+  test("reads a v1 file and returns it as v3", async () => {
     mkdirSync(memoryDir(), { recursive: true })
     writeFileSync(
       join(memoryDir(), "ses_old.json"),
@@ -133,7 +160,7 @@ describe("readMemory migration", () => {
       ),
     )
     const memory = await readMemory("ses_old")
-    expect(memory.version).toBe(2)
+    expect(memory.version).toBe(3)
     expect(memory.pendingTurns.length).toBe(1)
     expect(memory.pendingTurns[0]?.userExcerpt).toBe("a real question")
   })

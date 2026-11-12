@@ -8,14 +8,16 @@ import {
   removeNote,
   buildInjection,
   buildConsolidationInput,
+  allocate,
+} from "../src/memory"
+import {
   canConsolidate,
   backoffMs,
   retryDelayMs,
-  allocate,
-  markAttempt,
-  markSuccess,
-  markFailure,
-} from "../src/memory"
+  beginAttempt,
+  finishSuccess,
+  finishFailure,
+} from "../src/consolidation"
 import { emptyMemory, addActivity, type PendingTurn } from "../src/storage"
 import { defaultTokenCounter } from "../src/tokenizer"
 
@@ -150,12 +152,14 @@ describe("memory", () => {
     m.needsConsolidation = true
     expect(canConsolidate(m)).toBe(true)
 
-    markAttempt(m)
-    expect(m.failureCount).toBe(1)
+    const attemptId = "attempt-1"
+    beginAttempt(m, attemptId)
+    expect(m.consolidation.consecutiveFailures).toBe(0)
+    expect(m.consolidation.state).toBe("running")
     expect(canConsolidate(m)).toBe(false)
 
-    markFailure(m, "QuotaExceeded")
-    expect(m.lastFailure).toBe("QuotaExceeded")
+    finishFailure(m, attemptId, "QuotaExceeded")
+    expect(m.consolidation.error).toBe("QuotaExceeded")
     expect(canConsolidate(m)).toBe(false)
   })
 
@@ -172,19 +176,20 @@ describe("memory", () => {
   test("markSuccess resets the failure state", () => {
     const m = emptyMemory("s1")
     m.needsConsolidation = true
-    markAttempt(m)
-    markFailure(m, "boom")
-    markSuccess(m)
-    expect(m.failureCount).toBe(0)
-    expect(m.lastFailure).toBe(null)
-    expect(m.lastSuccessAt).not.toBe(null)
+    beginAttempt(m, "attempt-2a")
+    finishFailure(m, "attempt-2a", "boom")
+    beginAttempt(m, "attempt-2b")
+    finishSuccess(m, "attempt-2b")
+    expect(m.consolidation.consecutiveFailures).toBe(0)
+    expect(m.consolidation.error).toBe(null)
+    expect(m.consolidation.finishedAt).not.toBe(null)
   })
 
   test("retryDelayMs reports the wait before the next attempt", () => {
     const m = emptyMemory("s1")
     m.needsConsolidation = true
-    markAttempt(m)
-    markFailure(m, "boom")
+    beginAttempt(m, "attempt-3")
+    finishFailure(m, "attempt-3", "boom")
     const wait = retryDelayMs(m)
     expect(wait).toBeGreaterThan(0)
     expect(wait).toBeLessThanOrEqual(60_000)

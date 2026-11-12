@@ -137,29 +137,6 @@ export function buildConsolidationInput(memory: MemoryFile, budget = 12000): str
   return parts.join("\n\n")
 }
 
-const BACKOFF_STEPS = [60_000, 120_000, 240_000, 480_000, 600_000]
-
-/** How long to wait after the given number of consecutive failures. */
-export function backoffMs(failureCount: number): number {
-  if (failureCount <= 0) return 0
-  return BACKOFF_STEPS[Math.min(failureCount, BACKOFF_STEPS.length) - 1]!
-}
-
-/** How long the session must wait before the next consolidation attempt. */
-export function retryDelayMs(memory: MemoryFile, now = Date.now()): number {
-  if (!memory.lastAttemptAt) return 0
-  const elapsed = now - Date.parse(memory.lastAttemptAt)
-  if (Number.isNaN(elapsed)) return 0
-  const required = memory.lastFailure ? backoffMs(memory.failureCount) : 300_000
-  return Math.max(0, required - elapsed)
-}
-
-export function canConsolidate(memory: MemoryFile, now = Date.now()): boolean {
-  if (!memory.needsConsolidation) return false
-  if (!memory.lastAttemptAt) return true
-  return retryDelayMs(memory, now) === 0
-}
-
 export async function loadMemory(sessionID: string, parentSnapshotFrom: string | null = null): Promise<MemoryFile> {
   return readMemory(sessionID).then((m) => {
     if (m.sessionID !== sessionID) m.sessionID = sessionID
@@ -170,19 +147,4 @@ export async function loadMemory(sessionID: string, parentSnapshotFrom: string |
 
 export async function saveMemory(sessionID: string, memory: MemoryFile): Promise<void> {
   await writeMemory(sessionID, memory)
-}
-
-export function markAttempt(memory: MemoryFile): void {
-  memory.lastAttemptAt = new Date().toISOString()
-  memory.failureCount += 1
-}
-
-export function markSuccess(memory: MemoryFile): void {
-  memory.lastSuccessAt = new Date().toISOString()
-  memory.lastFailure = null
-  memory.failureCount = 0
-}
-
-export function markFailure(memory: MemoryFile, reason: string): void {
-  memory.lastFailure = reason.slice(0, 200)
 }

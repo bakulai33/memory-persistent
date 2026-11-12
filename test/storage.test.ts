@@ -153,12 +153,13 @@ describe("storage", () => {
     expect(memory.pendingActivity[0]?.target).toBe("/f10.ts")
   })
 
-  test("a new memory file carries the v2 shape", () => {
+  test("a new memory file carries the v3 shape", () => {
     const memory = emptyMemory("ses_new")
-    expect(memory.version).toBe(2)
+    expect(memory.version).toBe(3)
+    expect(memory.build).toBe("0.4.0")
+    expect(memory.summaryFacts).toBe("")
+    expect(memory.summaryNarrative).toBe("")
     expect(memory.pendingActivity).toEqual([])
-    expect(memory.lastSuccessAt).toBe(null)
-    expect(memory.lastFailure).toBe(null)
-    expect(memory.failureCount).toBe(0)
+    expect(memory.consolidation.state).toBe("idle")
   })
 })

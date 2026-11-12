@@ -15,14 +15,17 @@ import {
   removeNote,
   buildConsolidationInput,
   buildInjection,
-  canConsolidate,
   loadMemory,
   saveMemory,
-  markAttempt,
-  markFailure,
-  markSuccess,
-  retryDelayMs,
 } from "./memory.js"
+import {
+  canConsolidate,
+  retryDelayMs,
+  beginAttempt,
+  finishSuccess,
+  finishFailure,
+} from "./consolidation.js"
+import { randomUUID } from "node:crypto"
 import { sweep, type SessionLister } from "./sweep.js"
 import { isImportantPrompt, extractUserExcerpt } from "./heuristics.js"
 import { redact } from "./redact.js"
@@ -161,10 +164,11 @@ export default define({
               pendingTurns: memory.pendingTurns.length,
               pendingActivity: memory.pendingActivity.length,
               needsConsolidation: memory.needsConsolidation,
-              lastAttemptAt: memory.lastAttemptAt,
-              lastSuccessAt: memory.lastSuccessAt,
-              lastFailure: memory.lastFailure,
-              failureCount: memory.failureCount,
+              lastAttemptAt: memory.consolidation.lastAttemptAt,
+              lastSuccessAt: memory.consolidation.state === "idle" ? memory.consolidation.finishedAt : null,
+              lastFailure: memory.consolidation.error,
+              failureCount: memory.consolidation.consecutiveFailures,
+              consolidationState: memory.consolidation.state,
               nextRetryInMs: memory.needsConsolidation ? retryDelayMs(memory) : null,
             }
             return textResult(JSON.stringify(report, null, 2))
@@ -282,7 +286,8 @@ export default define({
         if (canConsolidate(memory) && (memory.pendingTurns.length > 0 || memory.pendingActivity.length > 0 || memory.notes.length > 0 || memory.needsConsolidation)) {
           // The attempt is recorded before the model call, so a crash cannot
           // leave the session retrying on every idle.
-          markAttempt(memory)
+          const attemptId = randomUUID()
+          beginAttempt(memory, attemptId)
           yield* Effect.promise(() => saveMemory(sessionID, memory))
           const input = buildConsolidationInput(memory, 12000)
           const prompt = `Consolidate the following session memory into a concise summary under ${Math.floor(budget * 0.9)} tokens. Keep decisions, changes, errors, constraints. Do not include raw tool output or secrets.\n\n${input}`
@@ -294,12 +299,12 @@ export default define({
               memory.pendingTurns = []
               memory.pendingActivity = []
               memory.needsConsolidation = false
-              markSuccess(memory)
+              finishSuccess(memory, attemptId)
               yield* Effect.promise(() => saveMemory(sessionID, memory))
             }
           } else {
             const reason = Exit.isFailure(outcome) ? Cause.pretty(outcome.cause) : "unknown error"
-            markFailure(memory, reason)
+            finishFailure(memory, attemptId, reason)
             yield* Effect.promise(() => saveMemory(sessionID, memory))
             console.error(`[memory-persistent] consolidation failed: ${reason}`)
           }
