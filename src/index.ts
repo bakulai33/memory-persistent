@@ -18,6 +18,7 @@ import {
   buildInjection,
   collectDelta,
   applyDelta,
+  runConsolidation,
   loadMemory,
   saveMemory,
 } from "./memory.js"
@@ -285,41 +286,39 @@ export default define({
     yield* ctx.session.hook("experimental.idle", (event: any) =>
       Effect.gen(function* () {
         const sessionID = sanitizeSessionID(event.sessionID)
-        // Phase 1 (short lock): gate, mark attempt, collect delta snapshot.
-        const phase1 = yield* Effect.promise(() =>
-          updateMemory(sessionID, (m) => {
-            if (!canConsolidate(m)) return null
-            beginAttempt(m, deltaAttemptId())
-            return collectDelta(m)
+        // Three-phase consolidation: collect and apply each take the per-session
+        // lock internally; generate runs between them with no lock held.
+        yield* Effect.promise(() =>
+          runConsolidation({
+            collect: async () =>
+              (
+                await updateMemory(sessionID, (m) => {
+                  if (!canConsolidate(m)) return null
+                  beginAttempt(m, deltaAttemptId())
+                  return collectDelta(m)
+                })
+              ).value,
+            generate: async (delta) => {
+              const prompt = buildConsolidationPrompt(delta, Math.floor(budget * 0.9))
+              const outcome = await Effect.runPromiseExit(ctx.session.generate({ sessionID, prompt }))
+              if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
+              return String(outcome.value?.text ?? "").trim()
+            },
+            apply: async (delta, narrative) => {
+              const truncated = truncateToTokenBudget(narrative, Math.floor(budget * 0.9), defaultTokenCounter)
+              await updateMemory(sessionID, (m) => {
+                applyDelta(m, delta, truncated)
+                finishSuccess(m, delta.attemptId)
+              })
+            },
+            fail: async (delta, error) => {
+              await updateMemory(sessionID, (m) => {
+                finishFailure(m, delta.attemptId, error)
+              })
+              console.error(`[memory-persistent] consolidation failed: ${error}`)
+            },
           }),
         )
-        const delta = phase1.value
-        if (delta) {
-          // Phase 2 (no lock): call the model.
-          const prompt = buildConsolidationPrompt(delta, Math.floor(budget * 0.9))
-          const outcome = yield* Effect.exit(ctx.session.generate({ sessionID, prompt }))
-          if (Exit.isSuccess(outcome)) {
-            const text = String(outcome.value?.text ?? "").trim()
-            if (text) {
-              const truncated = truncateToTokenBudget(text, Math.floor(budget * 0.9), defaultTokenCounter)
-              // Phase 3 (short lock): apply result only to snapshot entries.
-              yield* Effect.promise(() =>
-                updateMemory(sessionID, (m) => {
-                  applyDelta(m, delta, truncated)
-                  finishSuccess(m, delta.attemptId)
-                }),
-              )
-            }
-          } else {
-            const reason = Exit.isFailure(outcome) ? Cause.pretty(outcome.cause) : "unknown error"
-            yield* Effect.promise(() =>
-              updateMemory(sessionID, (m) => {
-                finishFailure(m, delta.attemptId, reason)
-              }),
-            )
-            console.error(`[memory-persistent] consolidation failed: ${reason}`)
-          }
-        }
 
         if (sweepEnabled && Date.now() - lastSweepAt >= sweepIntervalMs) {
           lastSweepAt = Date.now()

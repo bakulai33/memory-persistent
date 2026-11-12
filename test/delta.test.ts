@@ -16,6 +16,7 @@ import {
   buildConsolidationPrompt,
   collectDelta,
   applyDelta,
+  runConsolidation,
   type Delta,
 } from "../src/memory"
 import { beginAttempt } from "../src/consolidation"
@@ -47,6 +48,7 @@ describe("delta", () => {
     const m = emptyMemory("s1")
     m.needsConsolidation = true
     m.summaryFacts = "old facts"
+    m.summary = "combined old summary"
     addPendingTurn(m, turn("t1", "hello"))
     addPendingTurn(m, turn("t2", "world"))
     addActivity(m, { kind: "file", target: "src/index.ts" })
@@ -60,7 +62,7 @@ describe("delta", () => {
       { turnId: "t2", excerpt: "world" },
     ])
     expect(delta.activityIds).toEqual(m.pendingActivity.map((a) => a.id))
-    expect(delta.summary).toBe("old facts")
+    expect(delta.summary).toBe("combined old summary")
     expect(delta.facts).toContain("- file: src/index.ts")
     expect(delta.facts).toContain("- command: git commit")
     expect(delta.facts).toContain("- error: boom")
@@ -70,7 +72,7 @@ describe("delta", () => {
 
   test("buildConsolidationPrompt carries turn excerpts, not turn ids", () => {
     const m = emptyMemory("s5")
-    m.summaryFacts = "old facts"
+    m.summary = "old combined summary"
     beginAttempt(m, "attempt-prompt")
     addPendingTurn(m, turn("turn-id-9", "the user wants cobalt widgets"))
     addActivity(m, { kind: "file", target: "src/index.ts" })
@@ -79,7 +81,7 @@ describe("delta", () => {
     const prompt = buildConsolidationPrompt(delta, 900)
     expect(prompt).toContain("the user wants cobalt widgets")
     expect(prompt).not.toContain("turn-id-9")
-    expect(prompt).toContain("old facts")
+    expect(prompt).toContain("old combined summary")
     expect(prompt).toContain("- file: src/index.ts")
     expect(prompt).toContain("remember this")
     expect(prompt).toContain("900 token")
@@ -135,6 +137,121 @@ describe("delta", () => {
     const bad: Delta = { ...delta, attemptId: "other" }
     applyDelta(m, bad, "narr")
     expect(m).toEqual(before)
+  })
+
+  test("applyDelta accumulates facts and the next delta carries the narrative", () => {
+    const m = emptyMemory("s6")
+    beginAttempt(m, "cycle-1")
+    addActivity(m, { kind: "file", target: "src/index.ts" })
+    const first = collectDelta(m)
+    applyDelta(m, first, "first cycle narrative")
+    expect(m.summaryFacts).toBe("- file: src/index.ts")
+    expect(m.summaryNarrative).toBe("first cycle narrative")
+    expect(m.summary).toContain("first cycle narrative")
+
+    beginAttempt(m, "cycle-2")
+    addActivity(m, { kind: "command", target: "bun test" })
+    const second = collectDelta(m)
+    expect(second.summary).toContain("first cycle narrative")
+    const prompt = buildConsolidationPrompt(second, 900)
+    expect(prompt).toContain("first cycle narrative")
+
+    applyDelta(m, second, "second cycle narrative")
+    expect(m.summaryFacts).toContain("- file: src/index.ts")
+    expect(m.summaryFacts).toContain("- command: bun test")
+    expect(m.summaryNarrative).toBe("second cycle narrative")
+    expect(m.summary).toContain("- file: src/index.ts")
+    expect(m.summary).toContain("- command: bun test")
+    expect(m.summary).toContain("second cycle narrative")
+    expect(m.summaryFacts).not.toContain("second cycle narrative")
+  })
+
+  test("runConsolidation runs collect, generate, apply in order with no lock during generate", async () => {
+    const delta: Delta = {
+      attemptId: "attempt-orchestration",
+      turnIds: [],
+      activityIds: [],
+      turns: [],
+      notes: [],
+      summary: "",
+      facts: "",
+    }
+    const order: string[] = []
+    let locked = false
+    let generateSawLock = true
+    const result = await runConsolidation({
+      collect: async () => {
+        locked = true
+        order.push("collect")
+        try {
+          return delta
+        } finally {
+          locked = false
+        }
+      },
+      generate: async () => {
+        order.push("generate")
+        generateSawLock = locked
+        return "narrative"
+      },
+      apply: async () => {
+        locked = true
+        order.push("apply")
+        locked = false
+      },
+    })
+    expect(result).toBe("applied")
+    expect(order).toEqual(["collect", "generate", "apply"])
+    expect(generateSawLock).toBe(false)
+  })
+
+  test("runConsolidation skips when collect returns null", async () => {
+    let generated = 0
+    let applied = 0
+    const result = await runConsolidation({
+      collect: async () => null,
+      generate: async () => {
+        generated += 1
+        return "narrative"
+      },
+      apply: async () => {
+        applied += 1
+      },
+    })
+    expect(result).toBe("skipped")
+    expect(generated).toBe(0)
+    expect(applied).toBe(0)
+  })
+
+  test("runConsolidation reports a generate failure and calls fail", async () => {
+    const delta: Delta = {
+      attemptId: "attempt-failure",
+      turnIds: [],
+      activityIds: [],
+      turns: [],
+      notes: [],
+      summary: "",
+      facts: "",
+    }
+    const failures: { delta: Delta; error: string }[] = []
+    let applied = 0
+    const result = await runConsolidation({
+      collect: async () => delta,
+      generate: async () => {
+        throw new Error("provider down")
+      },
+      apply: async () => {
+        applied += 1
+      },
+      fail: async (failedDelta, error) => {
+        failures.push({ delta: failedDelta, error })
+      },
+    })
+    expect(result).toBe("failed")
+    expect(applied).toBe(0)
+    expect(failures).toHaveLength(1)
+    expect(failures[0]?.error).toContain("provider down")
+    expect(failures[0]?.delta).toBe(delta)
   })
 
   test("applyDelta after markDeleted does not recreate the file", async () => {

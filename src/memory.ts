@@ -176,7 +176,7 @@ export function collectDelta(m: MemoryFile): Delta {
   const turns = m.pendingTurns.map((t) => ({ turnId: t.turnId, excerpt: t.userExcerpt }))
   const activityIds = m.pendingActivity.map((a) => a.id)
   const notes = [...m.notes] as readonly MemoryNote[]
-  const summary = m.summaryFacts ?? ""
+  const summary = m.summary
   const facts = m.pendingActivity
     .map((a) => `- ${a.kind}: ${a.target}${a.count > 1 ? ` (${a.count}x)` : ""}`)
     .join("\n")
@@ -193,6 +193,41 @@ export function buildConsolidationPrompt(delta: Delta, budget: number): string {
   return parts.join("\n\n")
 }
 
+export type ConsolidationDeps = {
+  collect: () => Promise<Delta | null>
+  generate: (delta: Delta) => Promise<string>
+  apply: (delta: Delta, narrative: string) => Promise<void>
+  fail?: (delta: Delta, error: string) => Promise<void>
+}
+
+/**
+ * Three-phase consolidation: collect takes the lock and releases it, generate runs
+ * with no lock held, then apply takes the lock again. Keeping this orchestration
+ * injectable is what makes the lock discipline testable.
+ */
+export async function runConsolidation(deps: ConsolidationDeps): Promise<"skipped" | "applied" | "failed"> {
+  const delta = await deps.collect()
+  if (!delta) return "skipped"
+  let narrative: string
+  try {
+    narrative = await deps.generate(delta)
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err)
+    if (deps.fail) await deps.fail(delta, error)
+    return "failed"
+  }
+  await deps.apply(delta, narrative)
+  return "applied"
+}
+
+/** Merges fact lines across cycles, dropping exact duplicates and keeping order. */
+function mergeFacts(oldFacts: string, newFacts: string): string {
+  const lines = [...oldFacts.split("\n"), ...newFacts.split("\n")]
+    .map((line) => line.trim())
+    .filter(Boolean)
+  return [...new Set(lines)].join("\n")
+}
+
 export function applyDelta(m: MemoryFile, delta: Delta, narrative: string): void {
   if (m.consolidation.attemptId !== delta.attemptId) return
   const turnSet = new Set(delta.turnIds)
@@ -200,9 +235,9 @@ export function applyDelta(m: MemoryFile, delta: Delta, narrative: string): void
   m.pendingTurns = m.pendingTurns.filter((t) => !turnSet.has(t.turnId))
   m.pendingActivity = m.pendingActivity.filter((a) => !activitySet.has(a.id))
   const text = narrative.trim()
-  m.summaryFacts = delta.facts
+  m.summaryFacts = mergeFacts(m.summaryFacts, delta.facts)
   m.summaryNarrative = text
-  m.summary = [delta.facts, text].filter(Boolean).join("\n\n")
+  m.summary = [m.summaryFacts, text].filter(Boolean).join("\n\n")
   m.consolidation.consolidatedNotes = m.notes.length
   if (m.pendingTurns.length === 0 && m.pendingActivity.length === 0) {
     m.needsConsolidation = false
