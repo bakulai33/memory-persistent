@@ -1,0 +1,602 @@
+[
+  {
+    "id": "lab-01",
+    "lang": "en",
+    "label": "durable",
+    "text": "please fix the login redirect that loops back to the sign in page"
+  },
+  {
+    "id": "lab-02",
+    "lang": "en",
+    "label": "durable",
+    "text": "the build fails on the release branch with a missing dependency"
+  },
+  {
+    "id": "lab-03",
+    "lang": "en",
+    "label": "durable",
+    "text": "i agree we should ship the smaller change first"
+  },
+  {
+    "id": "lab-04",
+    "lang": "en",
+    "label": "durable",
+    "text": "the new module must not import anything from the legacy folder"
+  },
+  {
+    "id": "lab-05",
+    "lang": "en",
+    "label": "durable",
+    "text": "please review the migration script before it touches the customer table"
+  },
+  {
+    "id": "lab-06",
+    "lang": "en",
+    "label": "durable",
+    "text": "we decided to keep the plugin stateless so consolidation never sends history"
+  },
+  {
+    "id": "lab-07",
+    "lang": "en",
+    "label": "durable",
+    "text": "please implement the retry path for the webhook delivery worker"
+  },
+  {
+    "id": "lab-08",
+    "lang": "en",
+    "label": "durable",
+    "text": "the tests fail on windows because the path separator is hard coded"
+  },
+  {
+    "id": "lab-09",
+    "lang": "en",
+    "label": "durable",
+    "text": "please analyze the memory growth in long running sessions"
+  },
+  {
+    "id": "lab-10",
+    "lang": "en",
+    "label": "durable",
+    "text": "the error appears only after the session has been idle for ten minutes"
+  },
+  {
+    "id": "lab-11",
+    "lang": "en",
+    "label": "durable",
+    "text": "we should keep the schema version at three until the migration ships"
+  },
+  {
+    "id": "lab-12",
+    "lang": "en",
+    "label": "durable",
+    "text": "please research which library handles the token counting"
+  },
+  {
+    "id": "lab-13",
+    "lang": "en",
+    "label": "durable",
+    "text": "the deadline for this change is friday so please keep the scope small"
+  },
+  {
+    "id": "lab-14",
+    "lang": "en",
+    "label": "durable",
+    "text": "i approve the plan you wrote for the consolidation rewrite"
+  },
+  {
+    "id": "lab-15",
+    "lang": "en",
+    "label": "durable",
+    "text": "the database migration failed and left the old column in place"
+  },
+  {
+    "id": "lab-16",
+    "lang": "en",
+    "label": "durable",
+    "text": "please fix the off by one error in the pagination helper"
+  },
+  {
+    "id": "lab-17",
+    "lang": "en",
+    "label": "durable",
+    "text": "we must not store credentials in the memory files"
+  },
+  {
+    "id": "lab-18",
+    "lang": "en",
+    "label": "durable",
+    "text": "the plugin should ignore prompts that are only greetings"
+  },
+  {
+    "id": "lab-19",
+    "lang": "en",
+    "label": "durable",
+    "text": "please deep review the budget accounting in the injection path"
+  },
+  {
+    "id": "lab-20",
+    "lang": "en",
+    "label": "durable",
+    "text": "the cli crashes when the plugin directory has a space in it"
+  },
+  {
+    "id": "lab-21",
+    "lang": "en",
+    "label": "durable",
+    "text": "i agree with keeping the summary and the narrative in separate fields"
+  },
+  {
+    "id": "lab-22",
+    "lang": "en",
+    "label": "durable",
+    "text": "the review comments ask for a test on the corrupted file recovery"
+  },
+  {
+    "id": "lab-23",
+    "lang": "en",
+    "label": "durable",
+    "text": "please research how the opencode plugin loader resolves the entry module"
+  },
+  {
+    "id": "lab-24",
+    "lang": "en",
+    "label": "durable",
+    "text": "the decision was to cap the pending turns at twenty entries"
+  },
+  {
+    "id": "lab-25",
+    "lang": "en",
+    "label": "durable",
+    "text": "we decided to write the notes as plain json instead of sqlite"
+  },
+  {
+    "id": "lab-26",
+    "lang": "en",
+    "label": "durable",
+    "text": "the log says the token budget is exhausted but the summary shows plenty left"
+  },
+  {
+    "id": "lab-27",
+    "lang": "en",
+    "label": "durable",
+    "text": "please fix the flaky test that depends on the current time"
+  },
+  {
+    "id": "lab-28",
+    "lang": "en",
+    "label": "durable",
+    "text": "the sweep must never delete a file of a session that still exists"
+  },
+  {
+    "id": "lab-29",
+    "lang": "en",
+    "label": "durable",
+    "text": "i approve storing the excerpts redacted only"
+  },
+  {
+    "id": "lab-30",
+    "lang": "en",
+    "label": "durable",
+    "text": "please implement the tier field on the pending turn record"
+  },
+  {
+    "id": "lab-31",
+    "lang": "en",
+    "label": "durable",
+    "text": "the error message says the schema is bad but the file parses fine"
+  },
+  {
+    "id": "lab-32",
+    "lang": "en",
+    "label": "durable",
+    "text": "please analyze why the pending turns are evicted before the summary"
+  },
+  {
+    "id": "lab-33",
+    "lang": "en",
+    "label": "durable",
+    "text": "we should keep the notes separate from the generated narrative"
+  },
+  {
+    "id": "lab-34",
+    "lang": "en",
+    "label": "durable",
+    "text": "the review found a race between the read and the write path"
+  },
+  {
+    "id": "lab-35",
+    "lang": "en",
+    "label": "durable",
+    "text": "the deep link in the docs points to a page that no longer exists"
+  },
+  {
+    "id": "lab-36",
+    "lang": "en",
+    "label": "durable",
+    "text": "the decision to redact prompts came from a credential leak last month"
+  },
+  {
+    "id": "lab-37",
+    "lang": "id",
+    "label": "durable",
+    "text": "tolong perbaiki alur login yang memantul balik ke halaman awal"
+  },
+  {
+    "id": "lab-38",
+    "lang": "id",
+    "label": "durable",
+    "text": "koneksi ke server selalu gagal dengan pesan timeout exceeded"
+  },
+  {
+    "id": "lab-39",
+    "lang": "id",
+    "label": "durable",
+    "text": "saya setuju dengan masukan anda, lanjutkan saja ke langkah berikutnya"
+  },
+  {
+    "id": "lab-40",
+    "lang": "id",
+    "label": "durable",
+    "text": "operandanya harus tetap kompatibel dengan typescript versi lima"
+  },
+  {
+    "id": "lab-41",
+    "lang": "id",
+    "label": "durable",
+    "text": "silakan tinjau ulang rancangan modul antrian sebelum digabung"
+  },
+  {
+    "id": "lab-42",
+    "lang": "id",
+    "label": "durable",
+    "text": "error build muncul setelah dependensi paket diperbarui"
+  },
+  {
+    "id": "lab-43",
+    "lang": "id",
+    "label": "durable",
+    "text": "kita sepakat memakai pendekatan file per sesi untuk menyimpan memori"
+  },
+  {
+    "id": "lab-44",
+    "lang": "id",
+    "label": "durable",
+    "text": "lakukan analisis mendalam pada source code modul pembayaran"
+  },
+  {
+    "id": "lab-45",
+    "lang": "id",
+    "label": "durable",
+    "text": "riset ini harus memakai sumber resmi dari dokumentasi"
+  },
+  {
+    "id": "lab-46",
+    "lang": "id",
+    "label": "durable",
+    "text": "bug ini muncul hanya di lingkungan produksi"
+  },
+  {
+    "id": "lab-47",
+    "lang": "id",
+    "label": "durable",
+    "text": "seharusnya file memori disimpan dengan mode 0600"
+  },
+  {
+    "id": "lab-48",
+    "lang": "id",
+    "label": "durable",
+    "text": "tolong implementasikan penanda tier pada catatan turn"
+  },
+  {
+    "id": "lab-49",
+    "lang": "id",
+    "label": "durable",
+    "text": "keputusan kita: konsolidasi berjalan tanpa membawa riwayat sesi"
+  },
+  {
+    "id": "lab-50",
+    "lang": "id",
+    "label": "durable",
+    "text": "hasil pengujian gagal karena data contoh sudah usang"
+  },
+  {
+    "id": "lab-51",
+    "lang": "id",
+    "label": "durable",
+    "text": "boleh saya lanjutkan dengan menambahkan test untuk storage?"
+  },
+  {
+    "id": "lab-52",
+    "lang": "id",
+    "label": "durable",
+    "text": "error tersebut muncul setelah konfigurasi environment diubah"
+  },
+  {
+    "id": "lab-53",
+    "lang": "id",
+    "label": "durable",
+    "text": "kesalahan pada modul parser terjadi saat input kosong"
+  },
+  {
+    "id": "lab-54",
+    "lang": "id",
+    "label": "durable",
+    "text": "kita perlu menambah batas jumlah turn yang disimpan"
+  },
+  {
+    "id": "lab-55",
+    "lang": "id",
+    "label": "durable",
+    "text": "tolong analisa kenapa file memori menjadi jauh lebih besar"
+  },
+  {
+    "id": "lab-56",
+    "lang": "id",
+    "label": "durable",
+    "text": "review kode perlu dilakukan sebelum pull request digabung"
+  },
+  {
+    "id": "lab-57",
+    "lang": "id",
+    "label": "durable",
+    "text": "kalau gagal, rollback harus mengembalikan ke versi sebelumnya"
+  },
+  {
+    "id": "lab-58",
+    "lang": "id",
+    "label": "durable",
+    "text": "saya butuh ringkasan singkat tentang apa yang sudah diubah"
+  },
+  {
+    "id": "lab-59",
+    "lang": "id",
+    "label": "durable",
+    "text": "risetnya sudah selesai dan hasilnya saya ringkas di bawah ini"
+  },
+  {
+    "id": "lab-60",
+    "lang": "id",
+    "label": "durable",
+    "text": "tolong perbaiki penamaan variabel yang ambigu di fungsi parsing"
+  },
+  {
+    "id": "lab-61",
+    "lang": "id",
+    "label": "durable",
+    "text": "error pada modul storage muncul setelah file json tidak bisa dibaca"
+  },
+  {
+    "id": "lab-62",
+    "lang": "id",
+    "label": "durable",
+    "text": "keputusan tim: pakai penyimpanan per sesi, bukan satu file global"
+  },
+  {
+    "id": "lab-63",
+    "lang": "id",
+    "label": "durable",
+    "text": "modul ini harus bisa dipanggil dari hook prompt tanpa efek samping"
+  },
+  {
+    "id": "lab-64",
+    "lang": "id",
+    "label": "durable",
+    "text": "silakan riset apakah konsolidasi boleh berjalan di background"
+  },
+  {
+    "id": "lab-65",
+    "lang": "id",
+    "label": "durable",
+    "text": "test ini gagal karena summarize berjalan dua kali"
+  },
+  {
+    "id": "lab-66",
+    "lang": "id",
+    "label": "durable",
+    "text": "saya setuju untuk menghapus kode lama setelah migrasi selesai"
+  },
+  {
+    "id": "lab-67",
+    "lang": "id",
+    "label": "durable",
+    "text": "tinjauan kode menunjukkan potensi race pada file memori"
+  },
+  {
+    "id": "lab-68",
+    "lang": "id",
+    "label": "durable",
+    "text": "saya perlu laporan singkat tentang perubahan terakhir di repo ini"
+  },
+  {
+    "id": "lab-69",
+    "lang": "id",
+    "label": "durable",
+    "text": "error timeout muncul saat membuka file yang sangat besar"
+  },
+  {
+    "id": "lab-70",
+    "lang": "id",
+    "label": "durable",
+    "text": "boleh saya tahu mengapa ringkasan selalu kosong setelah konsolidasi?"
+  },
+  {
+    "id": "lab-71",
+    "lang": "id",
+    "label": "durable",
+    "text": "tambah test"
+  },
+  {
+    "id": "lab-72",
+    "lang": "id",
+    "label": "durable",
+    "text": "lihat log"
+  },
+  {
+    "id": "lab-73",
+    "lang": "id",
+    "label": "durable",
+    "text": "coba lagi"
+  },
+  {
+    "id": "lab-74",
+    "lang": "en",
+    "label": "noise",
+    "text": "hi"
+  },
+  {
+    "id": "lab-75",
+    "lang": "en",
+    "label": "noise",
+    "text": "hello there"
+  },
+  {
+    "id": "lab-76",
+    "lang": "en",
+    "label": "noise",
+    "text": "good morning"
+  },
+  {
+    "id": "lab-77",
+    "lang": "en",
+    "label": "noise",
+    "text": "ok"
+  },
+  {
+    "id": "lab-78",
+    "lang": "en",
+    "label": "noise",
+    "text": "okay"
+  },
+  {
+    "id": "lab-79",
+    "lang": "en",
+    "label": "noise",
+    "text": "ok thanks"
+  },
+  {
+    "id": "lab-80",
+    "lang": "en",
+    "label": "noise",
+    "text": "thanks"
+  },
+  {
+    "id": "lab-81",
+    "lang": "en",
+    "label": "noise",
+    "text": "thank you"
+  },
+  {
+    "id": "lab-82",
+    "lang": "en",
+    "label": "noise",
+    "text": "noted"
+  },
+  {
+    "id": "lab-83",
+    "lang": "en",
+    "label": "noise",
+    "text": "alright"
+  },
+  {
+    "id": "lab-84",
+    "lang": "id",
+    "label": "noise",
+    "text": "halo"
+  },
+  {
+    "id": "lab-85",
+    "lang": "id",
+    "label": "noise",
+    "text": "halo semua"
+  },
+  {
+    "id": "lab-86",
+    "lang": "id",
+    "label": "noise",
+    "text": "terima kasih"
+  },
+  {
+    "id": "lab-87",
+    "lang": "id",
+    "label": "noise",
+    "text": "makasih ya"
+  },
+  {
+    "id": "lab-88",
+    "lang": "id",
+    "label": "noise",
+    "text": "oke sip"
+  },
+  {
+    "id": "lab-89",
+    "lang": "id",
+    "label": "noise",
+    "text": "sip"
+  },
+  {
+    "id": "lab-90",
+    "lang": "id",
+    "label": "noise",
+    "text": "siap"
+  },
+  {
+    "id": "lab-91",
+    "lang": "id",
+    "label": "noise",
+    "text": "ntar ya"
+  },
+  {
+    "id": "lab-92",
+    "lang": "id",
+    "label": "noise",
+    "text": "lah"
+  },
+  {
+    "id": "lab-93",
+    "lang": "id",
+    "label": "noise",
+    "text": "eh tunggu dulu"
+  },
+  {
+    "id": "lab-94",
+    "lang": "en",
+    "label": "noise",
+    "text": "yow"
+  },
+  {
+    "id": "lab-95",
+    "lang": "id",
+    "label": "noise",
+    "text": "woy"
+  },
+  {
+    "id": "lab-96",
+    "lang": "en",
+    "label": "noise",
+    "text": "yeah"
+  },
+  {
+    "id": "lab-97",
+    "lang": "en",
+    "label": "noise",
+    "text": "yep"
+  },
+  {
+    "id": "lab-98",
+    "lang": "id",
+    "label": "noise",
+    "text": "mantap"
+  },
+  {
+    "id": "lab-99",
+    "lang": "id",
+    "label": "noise",
+    "text": "keren"
+  },
+  {
+    "id": "lab-100",
+    "lang": "id",
+    "label": "noise",
+    "text": "terima kasih banyak"
+  }
+]

@@ -1,0 +1,212 @@
+[
+  {
+    "id": "syn-01",
+    "lang": "id",
+    "kind": "task",
+    "text": "perbaiki bug di src/index.ts",
+    "tier": "always"
+  },
+  {
+    "id": "syn-02",
+    "lang": "id",
+    "kind": "task",
+    "text": "lakukan deep analysis pada source code",
+    "tier": "always"
+  },
+  {
+    "id": "syn-03",
+    "lang": "id",
+    "kind": "approval",
+    "text": "saya setuju dengan masukan anda",
+    "tier": "always"
+  },
+  {
+    "id": "syn-04",
+    "lang": "id",
+    "kind": "task",
+    "text": "@memory-persistent simpan konteks",
+    "tier": "always"
+  },
+  {
+    "id": "syn-05",
+    "lang": "en",
+    "kind": "approval",
+    "text": "i agree with the design, proceed to the next step",
+    "tier": "always"
+  },
+  {
+    "id": "syn-06",
+    "lang": "en",
+    "kind": "error",
+    "text": "the build fails with a missing module error",
+    "tier": "always"
+  },
+  {
+    "id": "syn-07",
+    "lang": "id",
+    "kind": "approval",
+    "text": "kita sepakat memakai file per sesi",
+    "tier": "always"
+  },
+  {
+    "id": "syn-08",
+    "lang": "en",
+    "kind": "task",
+    "text": "please review the parser before merging",
+    "tier": "always"
+  },
+  {
+    "id": "syn-09",
+    "lang": "id",
+    "kind": "constraint",
+    "text": "operandanya harus kompatibel dengan typescript 5",
+    "tier": "always"
+  },
+  {
+    "id": "syn-10",
+    "lang": "id",
+    "kind": "task",
+    "text": "tolong tinjau ulang modul antrian",
+    "tier": "always"
+  },
+  {
+    "id": "syn-11",
+    "lang": "en",
+    "kind": "constraint",
+    "text": "the new module must live under src/plugins",
+    "tier": "always"
+  },
+  {
+    "id": "syn-12",
+    "lang": "id",
+    "kind": "task",
+    "text": "silakan riset dokumentasi resmi untuk library ini",
+    "tier": "always"
+  },
+  {
+    "id": "syn-13",
+    "lang": "id",
+    "kind": "error",
+    "text": "koneksi ke server selalu gagal dengan pesan timeout exceeded",
+    "tier": "always"
+  },
+  {
+    "id": "syn-14",
+    "lang": "en",
+    "kind": "task",
+    "text": "please do a deep analysis of the scheduler module",
+    "tier": "always"
+  },
+  {
+    "id": "syn-15",
+    "lang": "en",
+    "kind": "question",
+    "text": "what is the difference between a cache and a buffer here?",
+    "tier": "likely"
+  },
+  {
+    "id": "syn-16",
+    "lang": "id",
+    "kind": "question",
+    "text": "apa perbedaan antara cache dan buffer di kode ini?",
+    "tier": "likely"
+  },
+  {
+    "id": "syn-17",
+    "lang": "en",
+    "kind": "question",
+    "text": "which database did the team pick for the reporting service?",
+    "tier": "likely"
+  },
+  {
+    "id": "syn-18",
+    "lang": "id",
+    "kind": "question",
+    "text": "sistem mana yang dipakai untuk antrian pesan saat ini?",
+    "tier": "likely"
+  },
+  {
+    "id": "syn-19",
+    "lang": "id",
+    "kind": "task",
+    "text": "coba jalankan ulang perintah build yang kemarin",
+    "tier": "likely"
+  },
+  {
+    "id": "syn-20",
+    "lang": "en",
+    "kind": "task",
+    "text": "please have a look at the report i sent earlier today",
+    "tier": "likely"
+  },
+  {
+    "id": "syn-21",
+    "lang": "id",
+    "kind": "question",
+    "text": "kamu bisa menjelaskan alur login di aplikasi mobile?",
+    "tier": "likely"
+  },
+  {
+    "id": "syn-22",
+    "lang": "en",
+    "kind": "question",
+    "text": "can you walk me through the caching strategy of this service?",
+    "tier": "likely"
+  },
+  {
+    "id": "syn-23",
+    "lang": "en",
+    "kind": "greeting",
+    "text": "hi",
+    "tier": "noise"
+  },
+  {
+    "id": "syn-24",
+    "lang": "id",
+    "kind": "greeting",
+    "text": "halo",
+    "tier": "noise"
+  },
+  {
+    "id": "syn-25",
+    "lang": "en",
+    "kind": "chatter",
+    "text": "ok",
+    "tier": "noise"
+  },
+  {
+    "id": "syn-26",
+    "lang": "en",
+    "kind": "chatter",
+    "text": "okay",
+    "tier": "noise"
+  },
+  {
+    "id": "syn-27",
+    "lang": "en",
+    "kind": "chatter",
+    "text": "thanks",
+    "tier": "noise"
+  },
+  {
+    "id": "syn-28",
+    "lang": "id",
+    "kind": "chatter",
+    "text": "terima kasih",
+    "tier": "noise"
+  },
+  {
+    "id": "syn-29",
+    "lang": "id",
+    "kind": "chatter",
+    "text": "siap",
+    "tier": "noise"
+  },
+  {
+    "id": "syn-30",
+    "lang": "id",
+    "kind": "chatter",
+    "text": "oke sip",
+    "tier": "noise"
+  }
+]

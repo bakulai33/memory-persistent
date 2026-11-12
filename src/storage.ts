@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto"
 import { BUILD, SCHEMA_VERSION } from "./build.js"
 import { emptyConsolidation, recoverStaleAttempt } from "./consolidation.js"
 import type { Consolidation } from "./consolidation.js"
+import type { CaptureTier } from "./capture.js"
 
 export interface MemoryNote {
   id: string
@@ -19,6 +20,8 @@ export interface PendingTurn {
   messageID: string
   userExcerpt: string
   createdAt: string
+  /** Capture tier of the prompt. A missing tier means the default tier, "likely". */
+  tier?: CaptureTier
 }
 
 /** Tool activity worth remembering: a file that changed, a meaningful command, or an error. */
@@ -142,6 +145,15 @@ function normalizeConsolidation(raw: unknown): Consolidation {
   return c
 }
 
+/** The tiers a stored turn may carry. */
+const CAPTURE_TIERS: CaptureTier[] = ["always", "likely", "noise"]
+
+/** Files written before the capture tiers existed carry no tier; the default tier is "likely". */
+function withTier(turn: PendingTurn): PendingTurn {
+  const tier = turn.tier
+  return { ...turn, tier: tier && CAPTURE_TIERS.includes(tier) ? tier : "likely" }
+}
+
 export async function readMemory(sessionID: string): Promise<MemoryFile> {
   const id = sanitizeSessionID(sessionID)
   const path = memoryPath(id)
@@ -162,7 +174,7 @@ export async function readMemory(sessionID: string): Promise<MemoryFile> {
         summaryFacts: parsed.summaryFacts ?? "",
         summaryNarrative: parsed.summaryNarrative ?? "",
         notes: parsed.notes ?? [],
-        pendingTurns: parsed.pendingTurns ?? [],
+        pendingTurns: (parsed.pendingTurns ?? []).map(withTier),
         pendingActivity: parsed.pendingActivity ?? [],
         needsConsolidation: parsed.needsConsolidation === true,
         consolidation: normalizeConsolidation(parsed.consolidation),
@@ -382,7 +394,7 @@ export function migrateV2(v2: MemoryFileV2): MemoryFile {
     summaryFacts: summary,
     summaryNarrative: "",
     notes: v2.notes ?? [],
-    pendingTurns: v2.pendingTurns ?? [],
+    pendingTurns: (v2.pendingTurns ?? []).map(withTier),
     pendingActivity: v2.pendingActivity ?? [],
     needsConsolidation: v2.needsConsolidation === true,
     consolidation,

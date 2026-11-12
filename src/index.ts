@@ -38,7 +38,8 @@ import {
   noteDeferral,
 } from "./consolidation.js"
 import { sweep, type SessionLister } from "./sweep.js"
-import { isImportantPrompt, extractUserExcerpt } from "./heuristics.js"
+import { extractUserExcerpt } from "./heuristics.js"
+import { capturePolicy } from "./capture.js"
 import { redact } from "./redact.js"
 import { classifyToolCall } from "./metadata.js"
 import { checkSourceTree, sourceHash } from "./selfcheck.js"
@@ -264,13 +265,15 @@ export default define({
           const text = event.prompt?.text ?? ""
           if (!text.trim()) return
           trackPrompt(sessionID, event.messageID)
-          if (!isImportantPrompt(text)) return
+          const tier = capturePolicy(text)
+          if (tier === "noise") return
           const memory = await loadMemory(sessionID)
           addPendingTurn(memory, {
             turnId: `${event.sessionID}:${event.messageID}`,
             messageID: event.messageID,
             userExcerpt: redact(extractUserExcerpt(text)),
             createdAt: new Date().toISOString(),
+            tier,
           })
           await saveMemory(sessionID, memory)
         } catch {}
