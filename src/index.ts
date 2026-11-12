@@ -22,6 +22,9 @@ import {
   runConsolidation,
   loadMemory,
   saveMemory,
+  defaultConsolidationMode,
+  estimatePromptTokens,
+  retryOnce,
 } from "./memory.js"
 import {
   canConsolidate,
@@ -137,6 +140,8 @@ export default define({
 
     const options = (ctx.options ?? {}) as Record<string, any>
     const budget = typeof options.tokenBudget === "number" ? options.tokenBudget : DEFAULT_TOKEN_BUDGET
+    // Stateless is the default: consolidation must not carry the session history.
+    const consolidationMode = options.consolidationMode === "session" ? "session" : defaultConsolidationMode()
     const sweepEnabled = options.sweepEnabled !== false
     const sweepIntervalMs =
       typeof options.sweepIntervalMs === "number" ? options.sweepIntervalMs : DEFAULT_SWEEP_INTERVAL_MS
@@ -374,9 +379,30 @@ export default define({
                 ).value,
               generate: async (delta) => {
                 const prompt = buildConsolidationPrompt(delta, Math.floor(budget * 0.9)) + fallbackNote
-                const outcome = await Effect.runPromiseExit(ctx.session.generate({ sessionID, prompt }))
-                if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
-                return String(outcome.value?.text ?? "").trim()
+                const estPromptTokens = estimatePromptTokens(prompt)
+                console.error(
+                  `[memory-persistent] consolidation mode=${consolidationMode} estPromptTokens=${estPromptTokens} turns=${delta.turns.length} activity=${delta.activityIds.length}`,
+                )
+
+                const sessionScoped = async () => {
+                  const outcome = await Effect.runPromiseExit(ctx.session.generate({ sessionID, prompt }))
+                  if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
+                  return String(outcome.value?.text ?? "").trim()
+                }
+
+                if (consolidationMode === "session") return retryOnce(sessionScoped)
+
+                // No session is passed, so the provider sees the prompt and model only.
+                // A missing model is valid: the generator falls back to the default.
+                const info = await Effect.runPromiseExit(ctx.session.get({ sessionID }))
+                const model = Exit.isSuccess(info) ? info.value?.model : undefined
+                return retryOnce(async () => {
+                  const outcome = await Effect.runPromiseExit(
+                    ctx.experimental.generate.text(model ? { prompt, model } : { prompt }),
+                  )
+                  if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
+                  return String(outcome.value?.text ?? "").trim()
+                })
               },
               apply: async (delta, narrative) => {
                 const truncated = truncateToTokenBudget(narrative, Math.floor(budget * 0.9), defaultTokenCounter)

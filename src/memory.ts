@@ -193,6 +193,35 @@ export function buildConsolidationPrompt(delta: Delta, budget: number): string {
   return parts.join("\n\n")
 }
 
+export type ConsolidationMode = "stateless" | "session"
+
+/**
+ * Consolidation never needs the session's message history, so the stateless
+ * generator is the default. The session-scoped path stays available as an
+ * explicit option.
+ */
+export function defaultConsolidationMode(): ConsolidationMode {
+  return "stateless"
+}
+
+/** Estimated prompt size, logged for every consolidation so cost is visible. */
+export function estimatePromptTokens(prompt: string): number {
+  return defaultTokenCounter(prompt)
+}
+
+/**
+ * Runs an operation once more before giving up. The stateless generator has no
+ * backoff of its own, so the second call is identical; the consolidation state
+ * machine still records the failure when both attempts fail.
+ */
+export async function retryOnce<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run()
+  } catch {
+    return await run()
+  }
+}
+
 export type ConsolidationDeps = {
   collect: () => Promise<Delta | null>
   generate: (delta: Delta) => Promise<string>
