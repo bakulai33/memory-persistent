@@ -178,6 +178,8 @@ export default define({
             }
             const payload = {
               summary: memory.summary,
+              summaryFacts: memory.summaryFacts,
+              summaryNarrative: memory.summaryNarrative,
               notes,
               pendingTurns: memory.pendingTurns.map((t) => t.userExcerpt),
               injection,

@@ -11,6 +11,10 @@ export const FACTS_BUDGET_SHARE = 0.35
 export const NARRATIVE_BUDGET_SHARE = 0.15
 /** Reserved share of the budget for the combined summary. */
 export const SUMMARY_BUDGET_SHARE = 0.5
+/** Alias kept for callers that use the short name. */
+export const SUMMARY_SHARE = SUMMARY_BUDGET_SHARE
+/** Shared cap used by buildInjection and the write path. */
+export const summaryCap = SUMMARY_BUDGET_SHARE
 export interface Delta {
   readonly attemptId: string
   readonly turnIds: string[]
@@ -78,7 +82,20 @@ export function allocate(sections: (Section | undefined)[], budget: number): num
 }
 
 export function buildInjection(memory: MemoryFile, budget = 5000): string {
-  const summary = memory.summary ? `Summary:\n${memory.summary}` : ""
+  let summaryCore = ""
+  if (memory.summaryFacts || memory.summaryNarrative) {
+    const cap = Number.isFinite(budget) ? Math.max(0, Math.floor(budget)) : 0
+    const factsBudget = Math.floor(cap * FACTS_BUDGET_SHARE)
+    const narrativeBudget = Math.floor(cap * NARRATIVE_BUDGET_SHARE)
+    const summaryBudget = Math.floor(cap * SUMMARY_BUDGET_SHARE)
+    const factsPart = truncateFacts((memory.summaryFacts ?? "").trim(), factsBudget)
+    const narrativePart = fitNarrative(factsPart, (memory.summaryNarrative ?? "").trim(), narrativeBudget, summaryBudget)
+    summaryCore = [factsPart, narrativePart].filter(Boolean).join("\n\n")
+    if (defaultTokenCounter(summaryCore) > summaryBudget) summaryCore = truncateToTokenBudget(summaryCore, summaryBudget)
+  } else if (memory.summary) {
+    summaryCore = memory.summary
+  }
+  const summary = summaryCore ? `Summary:\n${summaryCore}` : ""
   const conversation = memory.pendingTurns.length
     ? `Conversation:\n${memory.pendingTurns.map((t) => `- ${t.userExcerpt}`).join("\n")}`
     : ""
@@ -90,7 +107,7 @@ export function buildInjection(memory: MemoryFile, budget = 5000): string {
     : ""
 
   const sections: (Section | undefined)[] = [
-    summary ? { text: summary, capPct: 0.45 } : undefined,
+    summary ? { text: summary, capPct: SUMMARY_BUDGET_SHARE } : undefined,
     conversation ? { text: conversation, capPct: 0.3 } : undefined,
     notes ? { text: notes, capPct: 0.15 } : undefined,
     activity ? { text: activity, capPct: 0.1 } : undefined,
