@@ -178,14 +178,14 @@ export async function readMemory(sessionID: string): Promise<MemoryFile> {
   }
 }
 
-export async function writeMemoryUnlocked(sessionID: string, memory: MemoryFile): Promise<void> {
+async function writeMemoryUnlocked(sessionID: string, memory: MemoryFile): Promise<void> {
   const id = sanitizeSessionID(sessionID)
   if (isDeleted(id)) return
   const path = memoryPath(id)
   memory.sessionID = id
   memory.updatedAt = new Date().toISOString()
   await mkdir(dirname(path), { recursive: true })
-  const tmp = `${path}.tmp.${process.pid}.${Date.now()}`
+  const tmp = `${path}.tmp.${process.pid}.${Date.now()}.${randomUUID()}`
   await writeFile(tmp, JSON.stringify(memory, null, 2), { encoding: "utf8", mode: 0o600 })
   await rename(tmp, path)
   try {
