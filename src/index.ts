@@ -29,6 +29,8 @@ import {
   finishSuccess,
   finishFailure,
   deltaAttemptId,
+  shouldDefer,
+  noteDeferral,
 } from "./consolidation.js"
 import { sweep, type SessionLister } from "./sweep.js"
 import { isImportantPrompt, extractUserExcerpt } from "./heuristics.js"
@@ -286,39 +288,62 @@ export default define({
     yield* ctx.session.hook("experimental.idle", (event: any) =>
       Effect.gen(function* () {
         const sessionID = sanitizeSessionID(event.sessionID)
-        // Three-phase consolidation: collect and apply each take the per-session
-        // lock internally; generate runs between them with no lock held.
-        yield* Effect.promise(() =>
-          runConsolidation({
-            collect: async () =>
-              (
+        const backgroundCount = event.background?.length ?? 0
+
+        // Deferral: while background work is outstanding, postpone consolidation
+        // so we never summarize a half-finished session. A bounded fallback
+        // (3 deferrals or 15 minutes) prevents an eternal deferral.
+        let deferred = false
+        yield* Effect.promise(async () => {
+          const memory = await loadMemory(sessionID)
+          if (shouldDefer(memory, backgroundCount)) {
+            await updateMemory(sessionID, (m) => {
+              noteDeferral(m)
+            })
+            deferred = true
+          }
+        })
+
+        if (!deferred) {
+          const fallbackNote = backgroundCount > 0
+            ? "\n\nCatatan: background work mungkin masih berjalan; ringkasan dapat belum lengkap."
+            : ""
+          // Three-phase consolidation: collect and apply each take the per-session
+          // lock internally; generate runs between them with no lock held.
+          yield* Effect.promise(() =>
+            runConsolidation({
+              collect: async () =>
+                (
+                  await updateMemory(sessionID, (m) => {
+                    if (!canConsolidate(m)) return null
+                    beginAttempt(m, deltaAttemptId())
+                    return collectDelta(m)
+                  })
+                ).value,
+              generate: async (delta) => {
+                const prompt = buildConsolidationPrompt(delta, Math.floor(budget * 0.9)) + fallbackNote
+                const outcome = await Effect.runPromiseExit(ctx.session.generate({ sessionID, prompt }))
+                if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
+                return String(outcome.value?.text ?? "").trim()
+              },
+              apply: async (delta, narrative) => {
+                const truncated = truncateToTokenBudget(narrative, Math.floor(budget * 0.9), defaultTokenCounter)
                 await updateMemory(sessionID, (m) => {
-                  if (!canConsolidate(m)) return null
-                  beginAttempt(m, deltaAttemptId())
-                  return collectDelta(m)
+                  applyDelta(m, delta, truncated)
+                  finishSuccess(m, delta.attemptId)
                 })
-              ).value,
-            generate: async (delta) => {
-              const prompt = buildConsolidationPrompt(delta, Math.floor(budget * 0.9))
-              const outcome = await Effect.runPromiseExit(ctx.session.generate({ sessionID, prompt }))
-              if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
-              return String(outcome.value?.text ?? "").trim()
-            },
-            apply: async (delta, narrative) => {
-              const truncated = truncateToTokenBudget(narrative, Math.floor(budget * 0.9), defaultTokenCounter)
-              await updateMemory(sessionID, (m) => {
-                applyDelta(m, delta, truncated)
-                finishSuccess(m, delta.attemptId)
-              })
-            },
-            fail: async (delta, error) => {
-              await updateMemory(sessionID, (m) => {
-                finishFailure(m, delta.attemptId, error)
-              })
-              console.error(`[memory-persistent] consolidation failed: ${error}`)
-            },
-          }),
-        )
+              },
+              fail: async (delta, error) => {
+                await updateMemory(sessionID, (m) => {
+                  finishFailure(m, delta.attemptId, error)
+                })
+                console.error(`[memory-persistent] consolidation failed: ${error}`)
+              },
+            }),
+          )
+        }
+
+        if (deferred) return
 
         if (sweepEnabled && Date.now() - lastSweepAt >= sweepIntervalMs) {
           lastSweepAt = Date.now()

@@ -110,6 +110,27 @@ export function shouldConsolidate(m: MemoryFile, now: number = Date.now()): bool
   return m.needsConsolidation && m.consolidation.state !== "running"
 }
 
+export const DEFERRAL_FALLBACK_COUNT = 3
+export const DEFERRAL_FALLBACK_MS = 15 * 60_000
+
+export function shouldDefer(m: MemoryFile, backgroundCount: number, now: number = Date.now()): boolean {
+  const c = m.consolidation
+  if (!(backgroundCount > 0)) return false
+  const deferrals = Number.isFinite(c.deferrals) ? c.deferrals : 0
+  if (!(deferrals < DEFERRAL_FALLBACK_COUNT)) return false
+  if (c.deferredSince === null) return true
+  const since = Date.parse(c.deferredSince)
+  if (!Number.isFinite(since)) return true
+  return now - since < DEFERRAL_FALLBACK_MS
+}
+
+export function noteDeferral(m: MemoryFile, now: number = Date.now()): void {
+  const c = m.consolidation
+  if (!Number.isFinite(c.deferrals)) c.deferrals = 0
+  c.deferrals += 1
+  if (c.deferredSince === null) c.deferredSince = new Date(now).toISOString()
+}
+
 export function deltaAttemptId(): string {
   return randomUUID()
 }
