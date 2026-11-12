@@ -5,6 +5,12 @@ import { defaultTokenCounter, truncateToTokenBudget } from "./tokenizer.js"
 import { redact } from "./redact.js"
 import { deltaAttemptId } from "./consolidation.js"
 
+/** Reserved share of the budget for the deterministic facts half. */
+export const FACTS_BUDGET_SHARE = 0.35
+/** Reserved share of the budget for the model narrative half. */
+export const NARRATIVE_BUDGET_SHARE = 0.15
+/** Reserved share of the budget for the combined summary. */
+export const SUMMARY_BUDGET_SHARE = 0.5
 export interface Delta {
   readonly attemptId: string
   readonly turnIds: string[]
@@ -274,18 +280,25 @@ export function buildFacts(delta: Delta): string {
  * Truncates the narrative so facts and narrative together fit the budget.
  * Facts come first: an oversized or missing narrative never displaces them.
  */
-function fitNarrative(facts: string, narrative: string, budget: number): string {
-  if (!narrative) return ""
+function fitNarrative(facts: string, narrative: string, narrativeBudget: number, combinedBudget: number): string {
+  const trimmed = narrative.trim()
+  if (!trimmed) return ""
   const prefix = facts ? `${facts}\n\n` : ""
-  if (defaultTokenCounter(prefix + narrative) <= budget) return narrative
+  if (defaultTokenCounter(trimmed) <= narrativeBudget && defaultTokenCounter(prefix + trimmed) <= combinedBudget) {
+    return trimmed
+  }
   let lo = 0
-  let hi = narrative.length
+  let hi = trimmed.length
   while (lo < hi) {
     const mid = Math.floor((lo + hi + 1) / 2)
-    if (defaultTokenCounter(prefix + narrative.slice(0, mid)) <= budget) lo = mid
-    else hi = mid - 1
+    const slice = trimmed.slice(0, mid)
+    if (defaultTokenCounter(slice) <= narrativeBudget && defaultTokenCounter(prefix + slice) <= combinedBudget) {
+      lo = mid
+    } else {
+      hi = mid - 1
+    }
   }
-  return narrative.slice(0, lo).trimEnd()
+  return trimmed.slice(0, lo).trimEnd()
 }
 
 /**
@@ -311,10 +324,13 @@ function truncateFacts(facts: string, budget: number): string {
 
 function splitSummary(facts: string, narrative: string, budget: number): { narrative: string; summary: string } {
   const cap = Number.isFinite(budget) ? Math.max(0, Math.floor(budget)) : 0
-  const factsPart = truncateFacts(facts.trim(), cap)
-  const narrativePart = fitNarrative(factsPart, narrative.trim(), cap)
+  const factsBudget = Math.floor(cap * FACTS_BUDGET_SHARE)
+  const narrativeBudget = Math.floor(cap * NARRATIVE_BUDGET_SHARE)
+  const summaryBudget = Math.floor(cap * SUMMARY_BUDGET_SHARE)
+  const factsPart = truncateFacts(facts.trim(), factsBudget)
+  const narrativePart = fitNarrative(factsPart, narrative.trim(), narrativeBudget, summaryBudget)
   const summary = [factsPart, narrativePart].filter(Boolean).join("\n\n")
-  return { narrative: narrativePart, summary }
+  return { narrative: narrativePart, summary: defaultTokenCounter(summary) > summaryBudget ? truncateToTokenBudget(summary, summaryBudget) : summary }
 }
 
 /**
@@ -332,7 +348,8 @@ export function applyDelta(m: MemoryFile, delta: Delta, narrative: string, budge
   const activitySet = new Set(delta.activityIds)
   m.pendingTurns = m.pendingTurns.filter((t) => !turnSet.has(t.turnId))
   m.pendingActivity = m.pendingActivity.filter((a) => !activitySet.has(a.id))
-  m.summaryFacts = mergeFacts(m.summaryFacts, buildFacts(delta))
+  const factsBudget = Math.floor((Number.isFinite(budget) ? Math.max(0, Math.floor(budget)) : 0) * FACTS_BUDGET_SHARE)
+  m.summaryFacts = truncateFacts(mergeFacts(m.summaryFacts, buildFacts(delta)), factsBudget)
   const split = splitSummary(m.summaryFacts, narrative, budget)
   m.summaryNarrative = split.narrative
   m.summary = split.summary

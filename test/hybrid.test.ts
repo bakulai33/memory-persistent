@@ -7,6 +7,9 @@ import {
   buildFacts,
   collectDelta,
   mergeSummary,
+  FACTS_BUDGET_SHARE,
+  NARRATIVE_BUDGET_SHARE,
+  SUMMARY_BUDGET_SHARE,
   type Delta,
 } from "../src/memory"
 import { addActivity, emptyMemory } from "../src/storage"
@@ -115,5 +118,40 @@ describe("hybrid facts and narrative", () => {
     // budgeted summary shows it too because the tail is the fresh half.
     expect(m.summaryFacts).toContain("- error: boom")
     expect(m.summary).toContain("- error: boom")
+  })
+
+  test("applyDelta keeps stored summaryFacts within the facts slice", () => {
+    const budget = 200
+    const m = emptyMemory("s5")
+    for (let i = 0; i < 50; i++) {
+      beginAttempt(m, `attempt-bounded-${i}`)
+      addActivity(m, { kind: "file", target: `src/f-${i}.ts` })
+      const delta = collectDelta(m)
+      applyDelta(m, delta, `narrative ${i}`, budget)
+    }
+    expect(defaultTokenCounter(m.summaryFacts)).toBeLessThanOrEqual(Math.floor(budget * FACTS_BUDGET_SHARE))
+    expect(m.summaryFacts).toContain("src/f-49.ts")
+  })
+
+  test("applyDelta keeps a successful narrative even when facts fill their slice", () => {
+    const m = emptyMemory("s6")
+    m.summaryFacts = Array.from({ length: 200 }, (_, i) => `- file: src/module-${i}.ts`).join("\n")
+    beginAttempt(m, "attempt-survive")
+    addActivity(m, { kind: "error", target: "boom" })
+    const delta = collectDelta(m)
+    applyDelta(m, delta, "the model narrative", 5000)
+    expect(m.summaryNarrative).toBe("the model narrative")
+    expect(defaultTokenCounter(m.summaryNarrative)).toBeLessThanOrEqual(Math.floor(5000 * NARRATIVE_BUDGET_SHARE))
+  })
+
+  test("applyDelta never exceeds the summary slice", () => {
+    const budget = 120
+    const m = emptyMemory("s7")
+    m.summaryFacts = Array.from({ length: 300 }, (_, i) => `- file: src/legacy-${i}.ts`).join("\n")
+    beginAttempt(m, "attempt-slice")
+    addActivity(m, { kind: "error", target: "boom" })
+    const delta = collectDelta(m)
+    applyDelta(m, delta, "long narrative ".repeat(1000), budget)
+    expect(defaultTokenCounter(m.summary)).toBeLessThanOrEqual(Math.floor(budget * SUMMARY_BUDGET_SHARE))
   })
 })
