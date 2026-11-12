@@ -29,6 +29,7 @@ export interface ActivityEntry {
   id: string
   kind: "file" | "command" | "error"
   target: string
+  command: string | null
   count: number
   turnID?: string
   createdAt: string
@@ -154,6 +155,22 @@ function withTier(turn: PendingTurn): PendingTurn {
   return { ...turn, tier: tier && CAPTURE_TIERS.includes(tier) ? tier : "likely" }
 }
 
+/** Normalizes a stored activity entry so files written before `command` existed still load. */
+function normalizeActivityEntry(raw: unknown): ActivityEntry {
+  const r = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {}
+  const kind = r.kind === "file" || r.kind === "command" || r.kind === "error" ? r.kind : "file"
+  const target = typeof r.target === "string" ? r.target : ""
+  const count = typeof r.count === "number" && Number.isFinite(r.count) ? r.count : 1
+  const id = typeof r.id === "string" ? r.id : randomUUID()
+  const createdAt = typeof r.createdAt === "string" ? r.createdAt : new Date().toISOString()
+  const turnID = typeof r.turnID === "string" ? r.turnID : undefined
+  let command: string | null
+  if (r.command === null) command = null
+  else if (typeof r.command === "string") command = r.command
+  else command = kind === "command" && target ? (target.split(/\\s+/)[0] ?? null) : null
+  return { id, kind, target, command, count, turnID, createdAt }
+}
+
 export async function readMemory(sessionID: string): Promise<MemoryFile> {
   const id = sanitizeSessionID(sessionID)
   const path = memoryPath(id)
@@ -175,7 +192,7 @@ export async function readMemory(sessionID: string): Promise<MemoryFile> {
         summaryNarrative: parsed.summaryNarrative ?? "",
         notes: parsed.notes ?? [],
         pendingTurns: (parsed.pendingTurns ?? []).map(withTier),
-        pendingActivity: parsed.pendingActivity ?? [],
+        pendingActivity: (parsed.pendingActivity ?? []).map(normalizeActivityEntry),
         needsConsolidation: parsed.needsConsolidation === true,
         consolidation: normalizeConsolidation(parsed.consolidation),
       }
@@ -315,11 +332,19 @@ export function capActivity(entries: ActivityEntry[], max = 40): ActivityEntry[]
  * Records tool activity, folding repeats of the same target into a count.
  * Returns the entry when it was new, so callers can mark the session dirty.
  */
-export function addActivity(memory: MemoryFile, entry: Omit<ActivityEntry, "id" | "count" | "createdAt"> & { id?: string }): boolean {
+export function addActivity(memory: MemoryFile, entry: Omit<ActivityEntry, "id" | "count" | "createdAt" | "command"> & { id?: string; command?: string | null }): boolean {
+  const inferredCommand =
+    entry.command === undefined
+      ? entry.kind === "command"
+        ? (entry.target.split(/\\s+/)[0] ?? null)
+        : null
+      : entry.command
+  const command = inferredCommand
   const existing = memory.pendingActivity.find((item) => item.kind === entry.kind && item.target === entry.target)
   if (existing) {
     existing.count += 1
     if (!existing.turnID && entry.turnID) existing.turnID = entry.turnID
+    if (existing.command == null && command != null) existing.command = command
     memory.needsConsolidation = true
     return false
   }
@@ -327,6 +352,7 @@ export function addActivity(memory: MemoryFile, entry: Omit<ActivityEntry, "id" 
     id: entry.id ?? randomUUID(),
     kind: entry.kind,
     target: entry.target,
+    command,
     count: 1,
     turnID: entry.turnID,
     createdAt: new Date().toISOString(),
@@ -395,7 +421,7 @@ export function migrateV2(v2: MemoryFileV2): MemoryFile {
     summaryNarrative: "",
     notes: v2.notes ?? [],
     pendingTurns: (v2.pendingTurns ?? []).map(withTier),
-    pendingActivity: v2.pendingActivity ?? [],
+    pendingActivity: (v2.pendingActivity ?? []).map(normalizeActivityEntry),
     needsConsolidation: v2.needsConsolidation === true,
     consolidation,
     updatedAt: v2.updatedAt ?? new Date().toISOString(),

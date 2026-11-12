@@ -58,4 +58,16 @@ describe("real session fixture", () => {
       expect(classifyToolCall(call.tool, call.input, call)).toEqual([])
     }
   })
+
+  test("no read-only command target is recorded", () => {
+    const targets = new Set<string>()
+    for (const call of fixture) {
+      for (const entry of classifyToolCall(call.tool, call.input, call)) {
+        if (entry.kind === "command") targets.add(entry.target)
+      }
+    }
+    expect(targets.has("git status")).toBe(false)
+    expect(targets.has("git log")).toBe(false)
+    expect(targets.has("git diff")).toBe(false)
+  })
 })

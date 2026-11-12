@@ -56,12 +56,12 @@ describe("parseShellCommands", () => {
 describe("classifyToolCall", () => {
   test("records a file tool as file activity", () => {
     const entries = classifyToolCall("write", { path: "/repo/src/index.ts" }, { status: "completed" })
-    expect(entries).toEqual([{ kind: "file", target: "/repo/src/index.ts", turnID: undefined }])
+    expect(entries).toEqual([{ kind: "file", target: "/repo/src/index.ts", command: null, turnID: undefined }])
   })
 
   test("records a meaningful shell command", () => {
     const entries = classifyToolCall("shell", { command: "cd /x && bun test" }, { status: "completed" })
-    expect(entries).toEqual([{ kind: "command", target: "bun", turnID: undefined }])
+    expect(entries).toEqual([{ kind: "command", target: "bun test", command: "bun", turnID: undefined }])
   })
 
   test("ignores trivial shell commands", () => {
@@ -78,7 +78,7 @@ describe("classifyToolCall", () => {
 
   test("always records an error, even for an ignored tool", () => {
     const entries = classifyToolCall("read", { path: "/x" }, { status: "error", error: { message: "not found" } })
-    expect(entries).toEqual([{ kind: "error", target: "not found", turnID: undefined }])
+    expect(entries).toEqual([{ kind: "error", target: "not found", command: null, turnID: undefined }])
   })
 
   test("records both the command and the error of a failed call", () => {
@@ -89,6 +89,19 @@ describe("classifyToolCall", () => {
   test("carries the turn id onto every entry", () => {
     const entries = classifyToolCall("write", { path: "/x.ts" }, { status: "completed" }, "msg_1")
     expect(entries[0]?.turnID).toBe("msg_1")
+  })
+
+  test("records the subcommand for a shell command", () => {
+    expect(classifyToolCall("shell", { command: "git commit -m x" }, { status: "completed" })).toEqual([
+      { kind: "command", target: "git commit", command: "git", turnID: undefined },
+    ])
+    expect(classifyToolCall("shell", { command: "bun test" }, { status: "completed" })).toEqual([
+      { kind: "command", target: "bun test", command: "bun", turnID: undefined },
+    ])
+  })
+
+  test("drops read-only git subcommands", () => {
+    expect(classifyToolCall("shell", { command: "git status" }, { status: "completed" })).toEqual([])
   })
 
   test("the allow-list holds no trivial commands", () => {

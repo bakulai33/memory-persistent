@@ -100,19 +100,36 @@ function splitSegments(text: string): string[] {
  *
  * A heredoc body is a script, not commands, so it is cut before the scan.
  */
-export function parseShellCommands(command: string): string[] {
+const READONLY_GIT_SUBCOMMANDS = new Set([
+  "status", "log", "diff", "show", "branch", "remote", "blame", "describe",
+])
+
+const READONLY_COMMANDS = new Set(["ls", "cat", "grep", "find", "head", "tail"])
+
+interface ShellCommandDetail {
+  binary: string
+  subcommand: string | null
+}
+
+function shellCommandDetails(command: string): ShellCommandDetail[] {
   const heredoc = HEREDOC.exec(command)
   const head = heredoc ? command.slice(0, heredoc.index) : command
   const cleaned = head.replace(/`[^`]*`/g, " ")
-  const commands: string[] = []
+  const details: ShellCommandDetail[] = []
   for (const segment of splitSegments(cleaned)) {
     const tokens = segment.trim().split(/\s+/).filter(Boolean)
     let index = 0
     while (index < tokens.length && ASSIGNMENT.test(tokens[index]!)) index++
-    const first = tokens[index]
-    if (first) commands.push(first)
+    const binary = tokens[index]
+    if (!binary) continue
+    const subcommand = tokens[index + 1] ?? null
+    details.push({ binary, subcommand })
   }
-  return commands
+  return details
+}
+
+export function parseShellCommands(command: string): string[] {
+  return shellCommandDetails(command).map((detail) => detail.binary)
 }
 
 function toolError(event: { status?: string; error?: unknown }): string | undefined {
@@ -138,18 +155,23 @@ export function classifyToolCall(
 
   if (FILE_TOOLS.has(name)) {
     const path = args.path ?? args.filePath ?? args.file
-    if (typeof path === "string" && path.trim()) result.push({ kind: "file", target: path, turnID })
+    if (typeof path === "string" && path.trim()) result.push({ kind: "file", target: path, command: null, turnID })
   } else if (SHELL_TOOLS.has(name)) {
     const command = args.command
     if (typeof command === "string") {
-      for (const parsed of parseShellCommands(command)) {
-        if (SHELL_ALLOW.has(parsed)) result.push({ kind: "command", target: parsed, turnID })
+      for (const detail of shellCommandDetails(command)) {
+        const binary = detail.binary
+        if (!SHELL_ALLOW.has(binary)) continue
+        if (READONLY_COMMANDS.has(binary)) continue
+        if (binary === "git" && detail.subcommand !== null && READONLY_GIT_SUBCOMMANDS.has(detail.subcommand)) continue
+        const target = detail.subcommand ? `${binary} ${detail.subcommand}` : binary
+        result.push({ kind: "command", target, command: binary, turnID })
       }
     }
   }
 
   const error = toolError(event)
-  if (error) result.push({ kind: "error", target: error.slice(0, 200), turnID })
+  if (error) result.push({ kind: "error", target: error.slice(0, 200), command: null, turnID })
 
   return result
 }
