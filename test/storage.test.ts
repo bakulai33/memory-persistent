@@ -16,6 +16,7 @@ import {
   addActivity,
 } from "../src/storage"
 import { appendNote } from "../src/memory"
+import { canConsolidate } from "../src/consolidation"
 
 describe("storage", () => {
   let dir: string
@@ -195,6 +196,7 @@ describe("storage", () => {
     const first = await readMemory("ses_stale")
     expect(first.consolidation.state).toBe("failed")
     expect(first.consolidation.consecutiveFailures).toBe(1)
+    expect(canConsolidate(first)).toBe(true)
 
     const second = await readMemory("ses_stale")
     expect(second.consolidation.state).toBe("failed")
@@ -204,5 +206,32 @@ describe("storage", () => {
     const third = await readMemory("ses_stale")
     expect(third.consolidation.state).toBe("failed")
     expect(third.consolidation.consecutiveFailures).toBe(1)
+  })
+
+  test("partial consolidation normalizes to a full object", async () => {
+    const partial = {
+      version: 3,
+      sessionID: "ses_partial",
+      parentSnapshotFrom: null,
+      build: "0.4.0",
+      summary: "",
+      summaryFacts: "",
+      summaryNarrative: "",
+      notes: [],
+      pendingTurns: [],
+      pendingActivity: [],
+      needsConsolidation: true,
+      consolidation: { state: "running", startedAt: new Date(Date.now() - 6 * 60_000).toISOString() },
+      updatedAt: new Date().toISOString(),
+    }
+    await writeMemory("ses_partial", partial as any)
+    const m = await readMemory("ses_partial")
+    expect(m.consolidation.state).toBe("failed")
+    expect(m.consolidation.consecutiveFailures).toBe(1)
+    expect(m.consolidation.attemptId).toBeNull()
+    expect(m.consolidation.deferrals).toBe(0)
+    expect(m.consolidation.consolidatedNotes).toBe(0)
+    expect(Number.isFinite(m.consolidation.consecutiveFailures)).toBe(true)
+    expect(canConsolidate(m)).toBe(true)
   })
 })

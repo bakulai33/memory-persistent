@@ -114,6 +114,29 @@ export function emptyMemory(sessionID: string, parentSnapshotFrom: string | null
   }
 }
 
+function normalizeConsolidation(raw: unknown): Consolidation {
+  const c = emptyConsolidation()
+  if (!raw || typeof raw !== "object") return c
+  const r = raw as Record<string, unknown>
+  if (r.state === "running" || r.state === "failed") c.state = r.state
+  c.attemptId = typeof r.attemptId === "string" ? r.attemptId : null
+  c.startedAt = typeof r.startedAt === "string" ? r.startedAt : null
+  c.finishedAt = typeof r.finishedAt === "string" ? r.finishedAt : null
+  c.error = typeof r.error === "string" ? r.error : null
+  c.consecutiveFailures =
+    typeof r.consecutiveFailures === "number" && Number.isFinite(r.consecutiveFailures)
+      ? r.consecutiveFailures
+      : 0
+  c.deferrals = typeof r.deferrals === "number" && Number.isFinite(r.deferrals) ? r.deferrals : 0
+  c.deferredSince = typeof r.deferredSince === "string" ? r.deferredSince : null
+  c.lastAttemptAt = typeof r.lastAttemptAt === "string" ? r.lastAttemptAt : null
+  c.consolidatedNotes =
+    typeof r.consolidatedNotes === "number" && Number.isFinite(r.consolidatedNotes)
+      ? r.consolidatedNotes
+      : 0
+  return c
+}
+
 export async function readMemory(sessionID: string): Promise<MemoryFile> {
   const id = sanitizeSessionID(sessionID)
   const path = memoryPath(id)
@@ -136,7 +159,7 @@ export async function readMemory(sessionID: string): Promise<MemoryFile> {
         notes: parsed.notes ?? [],
         pendingTurns: parsed.pendingTurns ?? [],
         pendingActivity: parsed.pendingActivity ?? [],
-        consolidation: parsed.consolidation ?? emptyConsolidation(),
+        consolidation: normalizeConsolidation(parsed.consolidation),
       }
     } else {
       throw new Error("bad schema")
@@ -317,10 +340,10 @@ const V1_TOOL_PREFIX = /^(shell|bash|edit|write|patch|apply_patch|multiedit): /
 export function migrateV2(v2: MemoryFileV2): MemoryFile {
   const summary = v2.summary ?? ""
   const consolidation = emptyConsolidation()
-  consolidation.lastAttemptAt = v2.lastAttemptAt ?? null
-  consolidation.consecutiveFailures = v2.failureCount ?? 0
-  consolidation.error = v2.lastFailure ?? null
-  consolidation.state = v2.lastFailure ? "failed" : "idle"
+  consolidation.lastAttemptAt = typeof v2.lastAttemptAt === "string" ? v2.lastAttemptAt : null
+  consolidation.consecutiveFailures = typeof v2.failureCount === "number" && Number.isFinite(v2.failureCount) ? v2.failureCount : 0
+  consolidation.error = typeof v2.lastFailure === "string" ? v2.lastFailure : null
+  consolidation.state = consolidation.error ? "failed" : "idle"
   return {
     version: SCHEMA_VERSION,
     sessionID: v2.sessionID,

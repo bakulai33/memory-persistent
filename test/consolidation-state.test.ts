@@ -7,6 +7,8 @@ import {
   finishSuccess,
   finishFailure,
   recoverStaleAttempt,
+  retryDelayMs,
+  canConsolidate,
 } from "../src/consolidation"
 
 describe("consolidation state", () => {
@@ -79,5 +81,23 @@ describe("consolidation state", () => {
     expect(backoffMs(4)).toBe(480_000)
     expect(backoffMs(5)).toBe(600_000)
     expect(backoffMs(50)).toBe(600_000)
+  })
+
+  test("backoffMs is finite for garbage input", () => {
+    expect(Number.isFinite(backoffMs(NaN))).toBe(true)
+    expect(Number.isFinite(backoffMs(-1))).toBe(true)
+    expect(Number.isFinite(backoffMs(1.5))).toBe(true)
+    expect(backoffMs(NaN)).toBe(0)
+  })
+
+  test("retryDelayMs is finite for missing failure count", () => {
+    const m = emptyMemory("s2")
+    m.needsConsolidation = true
+    m.consolidation.state = "failed"
+    m.consolidation.lastAttemptAt = new Date(Date.now() - 6 * 60_000).toISOString()
+    m.consolidation.consecutiveFailures = NaN as any
+    const wait = retryDelayMs(m)
+    expect(Number.isFinite(wait)).toBe(true)
+    expect(canConsolidate(m)).toBe(true)
   })
 })

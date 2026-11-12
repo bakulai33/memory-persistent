@@ -31,8 +31,10 @@ export function emptyConsolidation(): Consolidation {
 const BACKOFF_STEPS = [60_000, 120_000, 240_000, 480_000, 600_000]
 
 export function backoffMs(failureCount: number): number {
-  if (failureCount <= 0) return 0
-  return BACKOFF_STEPS[Math.min(failureCount, BACKOFF_STEPS.length) - 1]!
+  if (!Number.isFinite(failureCount)) return 0
+  const n = Math.trunc(failureCount)
+  if (n <= 0) return 0
+  return BACKOFF_STEPS[Math.min(n, BACKOFF_STEPS.length) - 1]!
 }
 
 export const RUNNING_TIMEOUT_MS = 5 * 60_000
@@ -47,6 +49,7 @@ export function recoverStaleAttempt(m: MemoryFile, now: number = Date.now()): bo
   c.state = "failed"
   c.finishedAt = new Date(now).toISOString()
   c.error = "stale attempt (timeout)"
+  if (!Number.isFinite(c.consecutiveFailures)) c.consecutiveFailures = 0
   c.consecutiveFailures += 1
   c.attemptId = null
   return true
@@ -90,14 +93,15 @@ export function retryDelayMs(m: MemoryFile, now: number = Date.now()): number {
   const c = m.consolidation
   if (!c.lastAttemptAt) return 0
   const elapsed = now - Date.parse(c.lastAttemptAt)
-  if (Number.isNaN(elapsed)) return 0
+  if (!Number.isFinite(elapsed)) return 0
   const failed = c.state === "failed" || c.error !== null
   const required = failed ? backoffMs(c.consecutiveFailures) : 300_000
-  return Math.max(0, required - elapsed)
+  const result = Math.max(0, required - elapsed)
+  return Number.isFinite(result) ? result : 0
 }
 
 export function canConsolidate(m: MemoryFile, now: number = Date.now()): boolean {
-  if (!m.needsConsolidation) return false
-  if (m.consolidation.state === "running") return false
+  if (m.needsConsolidation !== true) return false
+  if (m.consolidation?.state === "running") return false
   return retryDelayMs(m, now) === 0
 }
