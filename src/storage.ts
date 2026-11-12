@@ -167,7 +167,7 @@ function normalizeActivityEntry(raw: unknown): ActivityEntry {
   let command: string | null
   if (r.command === null) command = null
   else if (typeof r.command === "string") command = r.command
-  else command = kind === "command" && target ? (target.split(/\\s+/)[0] ?? null) : null
+  else command = kind === "command" && target ? (target.split(/\s+/)[0] ?? null) : null
   return { id, kind, target, command, count, turnID, createdAt }
 }
 
@@ -336,7 +336,7 @@ export function addActivity(memory: MemoryFile, entry: Omit<ActivityEntry, "id" 
   const inferredCommand =
     entry.command === undefined
       ? entry.kind === "command"
-        ? (entry.target.split(/\\s+/)[0] ?? null)
+        ? (entry.target.split(/\s+/)[0] ?? null)
         : null
       : entry.command
   const command = inferredCommand

@@ -104,6 +104,17 @@ describe("classifyToolCall", () => {
     expect(classifyToolCall("shell", { command: "git status" }, { status: "completed" })).toEqual([])
   })
 
+  test("skips git global flags before the subcommand", () => {
+    expect(classifyToolCall("shell", { command: "git -c user.name=x commit" }, { status: "completed" })).toEqual([
+      { kind: "command", target: "git commit", command: "git", turnID: undefined },
+    ])
+    expect(classifyToolCall("shell", { command: "git -C /tmp status" }, { status: "completed" })).toEqual([])
+    expect(classifyToolCall("shell", { command: "git commit -m \"msg\"" }, { status: "completed" })).toEqual([
+      { kind: "command", target: "git commit", command: "git", turnID: undefined },
+    ])
+    expect(classifyToolCall("shell", { command: "git --no-pager log" }, { status: "completed" })).toEqual([])
+  })
+
   test("the allow-list holds no trivial commands", () => {
     for (const trivial of ["cd", "ls", "cat", "grep", "find", "echo", "pwd", "which", "head", "tail", "sed", "awk"]) {
       expect(SHELL_ALLOW.has(trivial)).toBe(false)

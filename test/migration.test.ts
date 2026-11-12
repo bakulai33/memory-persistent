@@ -42,7 +42,7 @@ describe("migrateV1", () => {
     )
     expect(migrated.pendingTurns.length).toBe(0)
     expect(migrated.pendingActivity).toEqual([
-      { id: expect.any(String), kind: "file", target: "/repo/src/index.ts", count: 1, turnID: undefined, createdAt: expect.any(String) },
+      { id: expect.any(String), kind: "file", target: "/repo/src/index.ts", command: null, count: 1, turnID: undefined, createdAt: expect.any(String) },
     ])
   })
 

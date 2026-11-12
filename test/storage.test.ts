@@ -293,3 +293,86 @@ describe("storage", () => {
     expect(canConsolidate(m)).toBe(true)
   })
 })
+
+describe("activity command inference", () => {
+  let dir: string
+  let orig: string | undefined
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mem-"))
+    orig = process.env.XDG_DATA_HOME
+    process.env.XDG_DATA_HOME = dir
+  })
+
+  afterEach(() => {
+    if (orig === undefined) delete process.env.XDG_DATA_HOME
+    else process.env.XDG_DATA_HOME = orig
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("addActivity infers the binary from the target when command is absent", () => {
+    const memory = emptyMemory("ses_inf")
+    addActivity(memory, { kind: "command", target: "git commit" } as any)
+    expect(memory.pendingActivity[0]?.command).toBe("git")
+  })
+
+  test("addActivity infers the binary for a target containing quotes", () => {
+    const memory = emptyMemory("ses_infq")
+    addActivity(memory, { kind: "command", target: 'git commit -m "msg"' } as any)
+    expect(memory.pendingActivity[0]?.command).toBe("git")
+  })
+
+  test("readMemory normalizes a missing command from the target", async () => {
+    await writeMemory("ses_norm", emptyMemory("ses_norm"))
+    // write a raw v3 file with command omitted
+    const { writeFile, mkdir } = await import("node:fs/promises")
+    const path = join(dir, "opencode", "memory-persistent", "sessions", "ses_norm.json")
+    const raw = {
+      version: 3,
+      sessionID: "ses_norm",
+      parentSnapshotFrom: null,
+      build: "0.4.0",
+      summary: "",
+      summaryFacts: "",
+      summaryNarrative: "",
+      notes: [],
+      pendingTurns: [],
+      pendingActivity: [
+        { id: "a1", kind: "command", target: "git commit", count: 1, createdAt: new Date().toISOString() },
+      ],
+      needsConsolidation: false,
+      consolidation: { state: "idle", attemptId: null, startedAt: null, finishedAt: null, error: null, consecutiveFailures: 0, deferrals: 0, deferredSince: null, lastAttemptAt: null, consolidatedNotes: 0 },
+      updatedAt: new Date().toISOString(),
+    }
+    await writeFile(path, JSON.stringify(raw), { encoding: "utf8" })
+    const m = await readMemory("ses_norm")
+    expect(m.pendingActivity[0]?.command).toBe("git")
+  })
+
+  test("readMemory normalizes a missing command for a target containing quotes", async () => {
+    const { writeFile } = await import("node:fs/promises")
+    const path = join(dir, "opencode", "memory-persistent", "sessions", "ses_normq.json")
+    const raw = {
+      version: 3,
+      sessionID: "ses_normq",
+      parentSnapshotFrom: null,
+      build: "0.4.0",
+      summary: "",
+      summaryFacts: "",
+      summaryNarrative: "",
+      notes: [],
+      pendingTurns: [],
+      pendingActivity: [
+        { id: "a1", kind: "command", target: 'git commit -m "msg"', count: 1, createdAt: new Date().toISOString() },
+      ],
+      needsConsolidation: false,
+      consolidation: { state: "idle", attemptId: null, startedAt: null, finishedAt: null, error: null, consecutiveFailures: 0, deferrals: 0, deferredSince: null, lastAttemptAt: null, consolidatedNotes: 0 },
+      updatedAt: new Date().toISOString(),
+    }
+    const { mkdir } = await import("node:fs/promises")
+    await mkdir(join(dir, "opencode", "memory-persistent", "sessions"), { recursive: true })
+    await writeFile(path, JSON.stringify(raw), { encoding: "utf8" })
+    const m = await readMemory("ses_normq")
+    expect(m.pendingActivity[0]?.command).toBe("git")
+  })
+})

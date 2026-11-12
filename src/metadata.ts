@@ -106,6 +106,12 @@ const READONLY_GIT_SUBCOMMANDS = new Set([
 
 const READONLY_COMMANDS = new Set(["ls", "cat", "grep", "find", "head", "tail"])
 
+// Git global options that consume the following token as their value.
+const GIT_VALUE_FLAGS = new Set([
+  "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix",
+  "--exec-path", "--config-env", "--attr-source",
+])
+
 interface ShellCommandDetail {
   binary: string
   subcommand: string | null
@@ -122,7 +128,33 @@ function shellCommandDetails(command: string): ShellCommandDetail[] {
     while (index < tokens.length && ASSIGNMENT.test(tokens[index]!)) index++
     const binary = tokens[index]
     if (!binary) continue
-    const subcommand = tokens[index + 1] ?? null
+    let cursor = index + 1
+    let subcommand: string | null = null
+    while (cursor < tokens.length) {
+      const token = tokens[cursor]!
+      if (!token.startsWith("-")) {
+        subcommand = token
+        break
+      }
+      if (token.includes("=")) {
+        cursor += 1
+        continue
+      }
+      if (binary === "git") {
+        const matchedFlag = [...GIT_VALUE_FLAGS].find(
+          (flag) => token === flag || token.startsWith(flag),
+        )
+        if (matchedFlag && token === matchedFlag) {
+          cursor += 2
+          continue
+        }
+        if (matchedFlag) {
+          cursor += 1
+          continue
+        }
+      }
+      cursor += 1
+    }
     details.push({ binary, subcommand })
   }
   return details
