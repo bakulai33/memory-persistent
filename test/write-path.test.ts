@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll } from "bun:test"
+import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { mock } from "bun:test"
 import * as realFs from "node:fs/promises"
 import { mkdtempSync, rmSync } from "node:fs"
@@ -40,19 +40,23 @@ describe("write path", () => {
     process.env.XDG_DATA_HOME = dir
   })
 
-  test("temp path includes a unique component", async () => {
+  test("two writes to the same session use different temp paths", async () => {
     captured.length = 0
     const sid = "ses_tmp_path"
     await storage.writeMemory(sid, storage.emptyMemory(sid))
-    expect(captured.length).toBeGreaterThan(0)
-    const tmp = captured[captured.length - 1]!
-    // pid.timestamp.uuid — the trailing UUID is the unique component
-    expect(tmp).toMatch(/\.tmp\.\d+\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    await storage.writeMemory(sid, storage.emptyMemory(sid))
+    expect(captured.length).toBe(2)
+    const [first, second] = captured
+    expect(first).not.toBe(second)
+    const uuidRe = /\.tmp\.\d+\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+    expect(first).toMatch(uuidRe)
+    expect(second).toMatch(uuidRe)
   })
 
-  test("trailing cleanup", () => {
+  afterAll(() => {
     if (orig === undefined) delete process.env.XDG_DATA_HOME
     else process.env.XDG_DATA_HOME = orig
     rmSync(dir, { recursive: true, force: true })
+    mock.restore()
   })
 })
