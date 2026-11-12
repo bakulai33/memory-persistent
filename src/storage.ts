@@ -178,20 +178,43 @@ export async function readMemory(sessionID: string): Promise<MemoryFile> {
   }
 }
 
-export async function writeMemory(sessionID: string, memory: MemoryFile): Promise<void> {
+export async function writeMemoryUnlocked(sessionID: string, memory: MemoryFile): Promise<void> {
   const id = sanitizeSessionID(sessionID)
   if (isDeleted(id)) return
   const path = memoryPath(id)
   memory.sessionID = id
   memory.updatedAt = new Date().toISOString()
   await mkdir(dirname(path), { recursive: true })
+  const tmp = `${path}.tmp.${process.pid}.${Date.now()}`
+  await writeFile(tmp, JSON.stringify(memory, null, 2), { encoding: "utf8", mode: 0o600 })
+  await rename(tmp, path)
+  try {
+    await chmod(path, 0o600)
+  } catch {}
+}
+
+export async function writeMemory(sessionID: string, memory: MemoryFile): Promise<void> {
+  const id = sanitizeSessionID(sessionID)
   await withLock(id, async () => {
-    const tmp = `${path}.tmp.${process.pid}.${Date.now()}`
-    await writeFile(tmp, JSON.stringify(memory, null, 2), { encoding: "utf8", mode: 0o600 })
-    await rename(tmp, path)
-    try {
-      await chmod(path, 0o600)
-    } catch {}
+    await writeMemoryUnlocked(id, memory)
+  })
+}
+
+export interface MemoryUpdate<T> {
+  readonly memory: MemoryFile
+  readonly value: T
+}
+
+export async function updateMemory<T>(
+  sessionID: string,
+  mutate: (m: MemoryFile) => T | Promise<T>,
+): Promise<MemoryUpdate<T>> {
+  const id = sanitizeSessionID(sessionID)
+  return withLock(id, async () => {
+    const m = await readMemory(id)
+    const value = await mutate(m)
+    await writeMemoryUnlocked(id, m)
+    return { memory: m, value }
   })
 }
 
