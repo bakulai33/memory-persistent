@@ -1,0 +1,7 @@
+{
+  "src/index.ts": [],
+  "src/build.ts": [
+    "BUILD",
+    "SCHEMA_VERSION"
+  ]
+}
