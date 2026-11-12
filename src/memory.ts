@@ -3,6 +3,16 @@ import type { MemoryFile, MemoryNote, PendingTurn } from "./storage.js"
 import { capActivity, capPendingTurns, readMemory, writeMemory } from "./storage.js"
 import { defaultTokenCounter, truncateToTokenBudget } from "./tokenizer.js"
 import { redact } from "./redact.js"
+import { deltaAttemptId } from "./consolidation.js"
+
+export interface Delta {
+  readonly attemptId: string
+  readonly turnIds: string[]
+  readonly activityIds: string[]
+  readonly notes: readonly MemoryNote[]
+  readonly summary: string
+  readonly facts: string
+}
 
 export function addPendingTurn(memory: MemoryFile, turn: PendingTurn): void {
   memory.pendingTurns = capPendingTurns([...memory.pendingTurns, turn], 20)
@@ -103,7 +113,13 @@ function cutLines(text: string, maxTokens: number): string {
   return kept.join("\n")
 }
 
-export function buildConsolidationInput(memory: MemoryFile, budget = 12000): string {
+function isDelta(input: MemoryFile | Delta): input is Delta {
+  return "attemptId" in input
+}
+
+export function buildConsolidationInput(input: MemoryFile | Delta, budget = 12000): string {
+  if (isDelta(input)) return buildConsolidationPrompt(input, budget)
+  const memory = input as MemoryFile
   // Headers label the sections for the model; they are not part of the
   // content budget, so a tiny allowance still carries at least one line.
   const summary = memory.summary ? { header: "CURRENT SUMMARY:", body: memory.summary } : undefined
@@ -147,4 +163,47 @@ export async function loadMemory(sessionID: string, parentSnapshotFrom: string |
 
 export async function saveMemory(sessionID: string, memory: MemoryFile): Promise<void> {
   await writeMemory(sessionID, memory)
+}
+
+export function collectDelta(m: MemoryFile): Delta {
+  if (m.consolidation.attemptId == null) {
+    m.consolidation.attemptId = deltaAttemptId()
+  }
+  const attemptId = m.consolidation.attemptId as string
+  const turnIds = m.pendingTurns.map((t) => t.turnId)
+  const activityIds = m.pendingActivity.map((a) => a.id)
+  const notes = [...m.notes] as readonly MemoryNote[]
+  const summary = m.summaryFacts ?? ""
+  const facts = m.pendingActivity
+    .map((a) => `- ${a.kind}: ${a.target}${a.count > 1 ? ` (${a.count}x)` : ""}`)
+    .join("\n")
+  return { attemptId, turnIds, activityIds, notes, summary, facts }
+}
+
+export function buildConsolidationPrompt(delta: Delta, budget: number): string {
+  const parts: string[] = []
+  if (delta.summary) parts.push(`CURRENT SUMMARY:\n${delta.summary}`)
+  if (delta.facts) parts.push(`FACTS:\n${delta.facts}`)
+  if (delta.turnIds.length) parts.push(`CONVERSATION:\n${delta.turnIds.map((id) => `- ${id}`).join("\n")}`)
+  if (delta.notes.length) parts.push(`MANUAL NOTES:\n${delta.notes.map((n) => `- ${n.text}`).join("\n")}`)
+  parts.push(`Tulis ringkasan final di bawah ${budget} token. Jangan sertakan output mentah.`)
+  return parts.join("\n\n")
+}
+
+export function applyDelta(m: MemoryFile, delta: Delta, narrative: string): void {
+  if (m.consolidation.attemptId !== delta.attemptId) return
+  const turnSet = new Set(delta.turnIds)
+  const activitySet = new Set(delta.activityIds)
+  m.pendingTurns = m.pendingTurns.filter((t) => !turnSet.has(t.turnId))
+  m.pendingActivity = m.pendingActivity.filter((a) => !activitySet.has(a.id))
+  const text = narrative.trim()
+  if (text) {
+    m.summary = text
+    m.summaryFacts = text
+    m.summaryNarrative = text
+  }
+  m.consolidation.consolidatedNotes = m.notes.length
+  if (m.pendingTurns.length === 0 && m.pendingActivity.length === 0) {
+    m.needsConsolidation = false
+  }
 }

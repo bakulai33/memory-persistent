@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import type { MemoryFile } from "./storage.js"
 
 export interface Consolidation {
@@ -103,4 +104,12 @@ export function canConsolidate(m: MemoryFile, now: number = Date.now()): boolean
   if (m.needsConsolidation !== true) return false
   if (m.consolidation?.state === "running") return false
   return retryDelayMs(m, now) === 0
+}
+
+export function shouldConsolidate(m: MemoryFile, now: number = Date.now()): boolean {
+  return m.needsConsolidation && m.consolidation.state !== "running"
+}
+
+export function deltaAttemptId(): string {
+  return randomUUID()
 }

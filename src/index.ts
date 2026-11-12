@@ -8,13 +8,16 @@ import {
   listMemoryFiles,
   markDeleted,
   sanitizeSessionID,
+  updateMemory,
 } from "./storage.js"
 import {
   addPendingTurn,
   appendNote,
   removeNote,
-  buildConsolidationInput,
+  buildConsolidationPrompt,
   buildInjection,
+  collectDelta,
+  applyDelta,
   loadMemory,
   saveMemory,
 } from "./memory.js"
@@ -24,8 +27,8 @@ import {
   beginAttempt,
   finishSuccess,
   finishFailure,
+  deltaAttemptId,
 } from "./consolidation.js"
-import { randomUUID } from "node:crypto"
 import { sweep, type SessionLister } from "./sweep.js"
 import { isImportantPrompt, extractUserExcerpt } from "./heuristics.js"
 import { redact } from "./redact.js"
@@ -282,30 +285,38 @@ export default define({
     yield* ctx.session.hook("experimental.idle", (event: any) =>
       Effect.gen(function* () {
         const sessionID = sanitizeSessionID(event.sessionID)
-        const memory = yield* Effect.promise(() => loadMemory(sessionID))
-        if (canConsolidate(memory) && (memory.pendingTurns.length > 0 || memory.pendingActivity.length > 0 || memory.notes.length > 0 || memory.needsConsolidation)) {
-          // The attempt is recorded before the model call, so a crash cannot
-          // leave the session retrying on every idle.
-          const attemptId = randomUUID()
-          beginAttempt(memory, attemptId)
-          yield* Effect.promise(() => saveMemory(sessionID, memory))
-          const input = buildConsolidationInput(memory, 12000)
-          const prompt = `Consolidate the following session memory into a concise summary under ${Math.floor(budget * 0.9)} tokens. Keep decisions, changes, errors, constraints. Do not include raw tool output or secrets.\n\n${input}`
+        // Phase 1 (short lock): gate, mark attempt, collect delta snapshot.
+        const phase1 = yield* Effect.promise(() =>
+          updateMemory(sessionID, (m) => {
+            if (!canConsolidate(m)) return null
+            beginAttempt(m, deltaAttemptId())
+            return collectDelta(m)
+          }),
+        )
+        const delta = phase1.value
+        if (delta) {
+          // Phase 2 (no lock): call the model.
+          const prompt = buildConsolidationPrompt(delta, Math.floor(budget * 0.9))
           const outcome = yield* Effect.exit(ctx.session.generate({ sessionID, prompt }))
           if (Exit.isSuccess(outcome)) {
             const text = String(outcome.value?.text ?? "").trim()
             if (text) {
-              memory.summary = truncateToTokenBudget(text, Math.floor(budget * 0.9), defaultTokenCounter)
-              memory.pendingTurns = []
-              memory.pendingActivity = []
-              memory.needsConsolidation = false
-              finishSuccess(memory, attemptId)
-              yield* Effect.promise(() => saveMemory(sessionID, memory))
+              const truncated = truncateToTokenBudget(text, Math.floor(budget * 0.9), defaultTokenCounter)
+              // Phase 3 (short lock): apply result only to snapshot entries.
+              yield* Effect.promise(() =>
+                updateMemory(sessionID, (m) => {
+                  applyDelta(m, delta, truncated)
+                  finishSuccess(m, delta.attemptId)
+                }),
+              )
             }
           } else {
             const reason = Exit.isFailure(outcome) ? Cause.pretty(outcome.cause) : "unknown error"
-            finishFailure(memory, attemptId, reason)
-            yield* Effect.promise(() => saveMemory(sessionID, memory))
+            yield* Effect.promise(() =>
+              updateMemory(sessionID, (m) => {
+                finishFailure(m, delta.attemptId, reason)
+              }),
+            )
             console.error(`[memory-persistent] consolidation failed: ${reason}`)
           }
         }
