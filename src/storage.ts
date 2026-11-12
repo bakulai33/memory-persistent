@@ -2,8 +2,8 @@ import { mkdir, readdir, readFile, rename, rm, writeFile, chmod } from "node:fs/
 import { dirname, join } from "node:path"
 import { homedir } from "node:os"
 import { randomUUID } from "node:crypto"
-import { BUILD } from "./build.js"
-import { emptyConsolidation } from "./consolidation.js"
+import { BUILD, SCHEMA_VERSION } from "./build.js"
+import { emptyConsolidation, recoverStaleAttempt } from "./consolidation.js"
 import type { Consolidation } from "./consolidation.js"
 
 export interface MemoryNote {
@@ -32,7 +32,7 @@ export interface ActivityEntry {
 }
 
 export interface MemoryFile {
-  version: 3
+  version: typeof SCHEMA_VERSION
   sessionID: string
   parentSnapshotFrom: string | null
   build: string
@@ -98,7 +98,7 @@ async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 export function emptyMemory(sessionID: string, parentSnapshotFrom: string | null = null): MemoryFile {
   const now = new Date().toISOString()
   return {
-    version: 3,
+    version: SCHEMA_VERSION,
     sessionID,
     parentSnapshotFrom,
     build: BUILD,
@@ -121,20 +121,28 @@ export async function readMemory(sessionID: string): Promise<MemoryFile> {
     const raw = await readFile(path, "utf8")
     const parsed = JSON.parse(raw) as MemoryFile | MemoryFileV1 | MemoryFileV2
     if (parsed.sessionID !== id) throw new Error("bad schema")
-    if (parsed.version === 1) return migrateV1(parsed as MemoryFileV1)
-    if (parsed.version === 2) return migrateV2(parsed as MemoryFileV2)
-    if (parsed.version !== 3) throw new Error("bad schema")
-    return {
-      ...parsed,
-      build: parsed.build ?? BUILD,
-      summary: parsed.summary ?? "",
-      summaryFacts: parsed.summaryFacts ?? "",
-      summaryNarrative: parsed.summaryNarrative ?? "",
-      notes: parsed.notes ?? [],
-      pendingTurns: parsed.pendingTurns ?? [],
-      pendingActivity: parsed.pendingActivity ?? [],
-      consolidation: parsed.consolidation ?? emptyConsolidation(),
+    let memory: MemoryFile
+    if (parsed.version === 1) {
+      memory = migrateV1(parsed as MemoryFileV1)
+    } else if (parsed.version === 2) {
+      memory = migrateV2(parsed as MemoryFileV2)
+    } else if (parsed.version === SCHEMA_VERSION) {
+      memory = {
+        ...parsed,
+        build: parsed.build ?? BUILD,
+        summary: parsed.summary ?? "",
+        summaryFacts: parsed.summaryFacts ?? "",
+        summaryNarrative: parsed.summaryNarrative ?? "",
+        notes: parsed.notes ?? [],
+        pendingTurns: parsed.pendingTurns ?? [],
+        pendingActivity: parsed.pendingActivity ?? [],
+        consolidation: parsed.consolidation ?? emptyConsolidation(),
+      }
+    } else {
+      throw new Error("bad schema")
     }
+    recoverStaleAttempt(memory)
+    return memory
   } catch (err: any) {
     if (err?.code === "ENOENT") return emptyMemory(id)
     // corrupt recovery: keep the unreadable file aside instead of losing it
@@ -314,7 +322,7 @@ export function migrateV2(v2: MemoryFileV2): MemoryFile {
   consolidation.error = v2.lastFailure ?? null
   consolidation.state = v2.lastFailure ? "failed" : "idle"
   return {
-    version: 3,
+    version: SCHEMA_VERSION,
     sessionID: v2.sessionID,
     parentSnapshotFrom: v2.parentSnapshotFrom,
     build: "0.3.0",

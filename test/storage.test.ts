@@ -162,4 +162,47 @@ describe("storage", () => {
     expect(memory.pendingActivity).toEqual([])
     expect(memory.consolidation.state).toBe("idle")
   })
+
+  test("readMemory recovers a stale running attempt in memory only", async () => {
+    const staleStarted = new Date(Date.now() - 6 * 60_000).toISOString()
+    const stale = {
+      version: 3,
+      sessionID: "ses_stale",
+      parentSnapshotFrom: null,
+      build: "0.4.0",
+      summary: "",
+      summaryFacts: "",
+      summaryNarrative: "",
+      notes: [],
+      pendingTurns: [],
+      pendingActivity: [],
+      needsConsolidation: true,
+      consolidation: {
+        state: "running",
+        attemptId: "attempt-stale",
+        startedAt: staleStarted,
+        finishedAt: null,
+        error: null,
+        consecutiveFailures: 0,
+        deferrals: 0,
+        deferredSince: null,
+        lastAttemptAt: staleStarted,
+        consolidatedNotes: 0,
+      },
+      updatedAt: new Date().toISOString(),
+    }
+    await writeMemory("ses_stale", stale as any)
+    const first = await readMemory("ses_stale")
+    expect(first.consolidation.state).toBe("failed")
+    expect(first.consolidation.consecutiveFailures).toBe(1)
+
+    const second = await readMemory("ses_stale")
+    expect(second.consolidation.state).toBe("failed")
+    expect(second.consolidation.consecutiveFailures).toBe(1)
+
+    await writeMemory("ses_stale", first)
+    const third = await readMemory("ses_stale")
+    expect(third.consolidation.state).toBe("failed")
+    expect(third.consolidation.consecutiveFailures).toBe(1)
+  })
 })
