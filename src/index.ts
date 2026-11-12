@@ -40,7 +40,6 @@ import { sweep, type SessionLister } from "./sweep.js"
 import { isImportantPrompt, extractUserExcerpt } from "./heuristics.js"
 import { redact } from "./redact.js"
 import { classifyToolCall } from "./metadata.js"
-import { defaultTokenCounter, truncateToTokenBudget } from "./tokenizer.js"
 import { checkSourceTree, sourceHash } from "./selfcheck.js"
 import { BUILD, SCHEMA_VERSION } from "./build.js"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
@@ -365,6 +364,9 @@ export default define({
           const fallbackNote = backgroundCount > 0
             ? "\n\nCatatan: background work mungkin masih berjalan; ringkasan dapat belum lengkap."
             : ""
+          // A failed model call must not discard the facts. It becomes an empty
+          // narrative, and the apply phase still records the deterministic half.
+          let narrativeError: string | null = null
           // Three-phase consolidation: collect and apply each take the per-session
           // lock internally; generate runs between them with no lock held.
           yield* Effect.promise(() =>
@@ -378,37 +380,47 @@ export default define({
                   })
                 ).value,
               generate: async (delta) => {
-                const prompt = buildConsolidationPrompt(delta, Math.floor(budget * 0.9)) + fallbackNote
-                const estPromptTokens = estimatePromptTokens(prompt)
-                console.error(
-                  `[memory-persistent] consolidation mode=${consolidationMode} estPromptTokens=${estPromptTokens} turns=${delta.turns.length} activity=${delta.activityIds.length}`,
-                )
-
-                const sessionScoped = async () => {
-                  const outcome = await Effect.runPromiseExit(ctx.session.generate({ sessionID, prompt }))
-                  if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
-                  return String(outcome.value?.text ?? "").trim()
-                }
-
-                if (consolidationMode === "session") return retryOnce(sessionScoped)
-
-                // No session is passed, so the provider sees the prompt and model only.
-                // A missing model is valid: the generator falls back to the default.
-                const info = await Effect.runPromiseExit(ctx.session.get({ sessionID }))
-                const model = Exit.isSuccess(info) ? info.value?.model : undefined
-                return retryOnce(async () => {
-                  const outcome = await Effect.runPromiseExit(
-                    ctx.experimental.generate.text(model ? { prompt, model } : { prompt }),
+                try {
+                  const prompt = buildConsolidationPrompt(delta, Math.floor(budget * 0.9)) + fallbackNote
+                  const estPromptTokens = estimatePromptTokens(prompt)
+                  console.error(
+                    `[memory-persistent] consolidation mode=${consolidationMode} estPromptTokens=${estPromptTokens} turns=${delta.turns.length} activity=${delta.activityIds.length}`,
                   )
-                  if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
-                  return String(outcome.value?.text ?? "").trim()
-                })
+
+                  const sessionScoped = async () => {
+                    const outcome = await Effect.runPromiseExit(ctx.session.generate({ sessionID, prompt }))
+                    if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
+                    return String(outcome.value?.text ?? "").trim()
+                  }
+
+                  if (consolidationMode === "session") return await retryOnce(sessionScoped)
+
+                  // No session is passed, so the provider sees the prompt and model only.
+                  // A missing model is valid: the generator falls back to the default.
+                  const info = await Effect.runPromiseExit(ctx.session.get({ sessionID }))
+                  const model = Exit.isSuccess(info) ? info.value?.model : undefined
+                  return await retryOnce(async () => {
+                    const outcome = await Effect.runPromiseExit(
+                      ctx.experimental.generate.text(model ? { prompt, model } : { prompt }),
+                    )
+                    if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
+                    return String(outcome.value?.text ?? "").trim()
+                  })
+                } catch (err) {
+                  narrativeError = err instanceof Error ? err.message : String(err)
+                  console.error(`[memory-persistent] consolidation narrative unavailable: ${narrativeError}`)
+                  return ""
+                }
               },
               apply: async (delta, narrative) => {
-                const truncated = truncateToTokenBudget(narrative, Math.floor(budget * 0.9), defaultTokenCounter)
+                const error = narrative.trim() ? null : (narrativeError ?? "model returned no narrative")
                 await updateMemory(sessionID, (m) => {
-                  applyDelta(m, delta, truncated)
-                  finishSuccess(m, delta.attemptId)
+                  applyDelta(m, delta, narrative, budget)
+                  if (error === null) {
+                    finishSuccess(m, delta.attemptId)
+                  } else if (finishFailure(m, delta.attemptId, error)) {
+                    console.error(`[memory-persistent] consolidation narrative failed: ${error}`)
+                  }
                 })
               },
               fail: async (delta, error) => {

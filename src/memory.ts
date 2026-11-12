@@ -257,16 +257,85 @@ function mergeFacts(oldFacts: string, newFacts: string): string {
   return [...new Set(lines)].join("\n")
 }
 
-export function applyDelta(m: MemoryFile, delta: Delta, narrative: string): void {
+/**
+ * Deterministic facts for a delta: the files, commands and errors the plugin
+ * recorded itself. They survive a failed model call, so they never depend on
+ * the narrative being produced.
+ */
+export function buildFacts(delta: Delta): string {
+  const lines = delta.facts
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+  return [...new Set(lines)].join("\n")
+}
+
+/**
+ * Truncates the narrative so facts and narrative together fit the budget.
+ * Facts come first: an oversized or missing narrative never displaces them.
+ */
+function fitNarrative(facts: string, narrative: string, budget: number): string {
+  if (!narrative) return ""
+  const prefix = facts ? `${facts}\n\n` : ""
+  if (defaultTokenCounter(prefix + narrative) <= budget) return narrative
+  let lo = 0
+  let hi = narrative.length
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi + 1) / 2)
+    if (defaultTokenCounter(prefix + narrative.slice(0, mid)) <= budget) lo = mid
+    else hi = mid - 1
+  }
+  return narrative.slice(0, lo).trimEnd()
+}
+
+/**
+ * Facts accumulate oldest-first, so a cap keeps the newest lines: the latest
+ * files, commands and errors are the ones the next turn needs.
+ */
+function truncateFacts(facts: string, budget: number): string {
+  if (defaultTokenCounter(facts) <= budget) return facts
+  const lines = facts.split("\n")
+  const kept: string[] = []
+  let used = 0
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index]!
+    const cost = defaultTokenCounter(line) + 1
+    if (used + cost > budget) break
+    kept.unshift(line)
+    used += cost
+  }
+  if (kept.length === 0) return truncateToTokenBudget(facts, budget)
+  const joined = kept.join("\n")
+  return defaultTokenCounter(joined) > budget ? truncateToTokenBudget(joined, budget) : joined
+}
+
+function splitSummary(facts: string, narrative: string, budget: number): { narrative: string; summary: string } {
+  const cap = Number.isFinite(budget) ? Math.max(0, Math.floor(budget)) : 0
+  const factsPart = truncateFacts(facts.trim(), cap)
+  const narrativePart = fitNarrative(factsPart, narrative.trim(), cap)
+  const summary = [factsPart, narrativePart].filter(Boolean).join("\n\n")
+  return { narrative: narrativePart, summary }
+}
+
+/**
+ * Joins the deterministic facts and the optional model narrative into a single
+ * summary that never exceeds the budget. The two halves stay separate in the
+ * record; only this display string carries both.
+ */
+export function mergeSummary(facts: string, narrative: string, budget: number): string {
+  return splitSummary(facts, narrative, budget).summary
+}
+
+export function applyDelta(m: MemoryFile, delta: Delta, narrative: string, budget = 5000): void {
   if (m.consolidation.attemptId !== delta.attemptId) return
   const turnSet = new Set(delta.turnIds)
   const activitySet = new Set(delta.activityIds)
   m.pendingTurns = m.pendingTurns.filter((t) => !turnSet.has(t.turnId))
   m.pendingActivity = m.pendingActivity.filter((a) => !activitySet.has(a.id))
-  const text = narrative.trim()
-  m.summaryFacts = mergeFacts(m.summaryFacts, delta.facts)
-  m.summaryNarrative = text
-  m.summary = [m.summaryFacts, text].filter(Boolean).join("\n\n")
+  m.summaryFacts = mergeFacts(m.summaryFacts, buildFacts(delta))
+  const split = splitSummary(m.summaryFacts, narrative, budget)
+  m.summaryNarrative = split.narrative
+  m.summary = split.summary
   m.consolidation.consolidatedNotes = m.notes.length
   if (m.pendingTurns.length === 0 && m.pendingActivity.length === 0) {
     m.needsConsolidation = false
