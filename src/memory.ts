@@ -29,6 +29,9 @@ export interface Delta {
 export function addPendingTurn(memory: MemoryFile, turn: PendingTurn): void {
   memory.pendingTurns = capPendingTurns([...memory.pendingTurns, turn], 20)
   memory.needsConsolidation = true
+  if (memory.consolidation && memory.consolidation.pendingSince == null) {
+    memory.consolidation.pendingSince = new Date().toISOString()
+  }
 }
 
 export function appendNote(memory: MemoryFile, text: string, tags: string[] = [], source: "manual" | "auto" = "manual"): MemoryNote {
@@ -373,5 +376,6 @@ export function applyDelta(m: MemoryFile, delta: Delta, narrative: string, budge
   m.consolidation.consolidatedNotes = m.notes.length
   if (m.pendingTurns.length === 0 && m.pendingActivity.length === 0) {
     m.needsConsolidation = false
+    if (m.consolidation) m.consolidation.pendingSince = null
   }
 }

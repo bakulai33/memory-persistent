@@ -144,6 +144,7 @@ function normalizeConsolidation(raw: unknown): Consolidation {
   c.deferrals = typeof r.deferrals === "number" && Number.isFinite(r.deferrals) ? r.deferrals : 0
   c.deferredSince = typeof r.deferredSince === "string" ? r.deferredSince : null
   c.lastAttemptAt = typeof r.lastAttemptAt === "string" ? r.lastAttemptAt : null
+  c.pendingSince = typeof r.pendingSince === "string" ? r.pendingSince : null
   c.consolidatedNotes =
     typeof r.consolidatedNotes === "number" && Number.isFinite(r.consolidatedNotes)
       ? r.consolidatedNotes
@@ -397,6 +398,9 @@ export function addActivity(memory: MemoryFile, entry: Omit<ActivityEntry, "id" 
     if (!existing.turnID && entry.turnID) existing.turnID = entry.turnID
     if (existing.command == null && command != null) existing.command = command
     memory.needsConsolidation = true
+    if (memory.consolidation && memory.consolidation.pendingSince == null) {
+      memory.consolidation.pendingSince = new Date().toISOString()
+    }
     return false
   }
   const created: ActivityEntry = {
@@ -410,6 +414,9 @@ export function addActivity(memory: MemoryFile, entry: Omit<ActivityEntry, "id" 
   }
   memory.pendingActivity = capActivity([...memory.pendingActivity, created])
   memory.needsConsolidation = true
+  if (memory.consolidation && memory.consolidation.pendingSince == null) {
+    memory.consolidation.pendingSince = new Date().toISOString()
+  }
   return true
 }
 

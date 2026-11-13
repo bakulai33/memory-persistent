@@ -12,6 +12,7 @@ export interface Consolidation {
   deferrals: number
   deferredSince: string | null
   lastAttemptAt: string | null
+  pendingSince: string | null
   consolidatedNotes: number
 }
 
@@ -26,6 +27,7 @@ export function emptyConsolidation(): Consolidation {
     deferrals: 0,
     deferredSince: null,
     lastAttemptAt: null,
+    pendingSince: null,
     consolidatedNotes: 0,
   }
 }
@@ -125,9 +127,9 @@ export function shouldConsolidate(m: MemoryFile, now: number = Date.now()): bool
     const prompt = buildConsolidationInput(m, 12000)
     if (estimatePromptTokens(prompt) >= 500) return true
   }
-  const lastAttemptAt = m.consolidation?.lastAttemptAt
-  if (typeof lastAttemptAt === "string") {
-    const elapsed = now - Date.parse(lastAttemptAt)
+  const ref = m.consolidation?.lastAttemptAt ?? m.consolidation?.pendingSince
+  if (typeof ref === "string") {
+    const elapsed = now - Date.parse(ref)
     if (Number.isFinite(elapsed) && elapsed > 10 * 60_000) return true
   }
   return false
