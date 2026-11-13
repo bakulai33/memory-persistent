@@ -17,6 +17,8 @@ Use this skill when you need to remember or recall context for the current sessi
 - Use `memory_list` to inspect stored notes.
 - Use `memory_forget` to remove a note.
 - Use `memory_health` to check whether consolidation is working.
+- A summary may be **partial** when background work was still running when it was written;
+  treat it as incomplete and re-check after the session goes idle.
 
 ## When to store
 

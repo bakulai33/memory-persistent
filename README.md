@@ -34,11 +34,14 @@ Opsi plugin:
 
 | Kejadian | Yang terjadi |
 |---|---|
-| Prompt penting | Ditandai sebagai pending turn (heuristik, tanpa model) |
+| Prompt penting | Ditandai sebagai pending turn (heuristik, tanpa model); policy capture menentukan apakah disimpan |
 | Tool yang mengubah state | Dicatat sebagai activity: file yang diubah, command bermakna, atau error |
 | Setiap request | Memori diinjeksikan sebagai system part (maks 5000 token) |
-| Sesi idle | Percakapan + activity dikonsolidasi menjadi ringkasan (model sesi) |
-| Konsolidasi gagal | Dicatat `lastFailure`, di-log, retry dengan backoff 1→2→4→8→10 menit |
+| Sesi idle | Percakapan + activity dikonsolidasi: state `idle` → `running` → `idle` (sukses) atau `failed` (gagal) |
+| Konsolidasi berjalan > 5 menit tanpa selesai | Attempt dianggap mati, di-recover menjadi `failed` (consecutiveFailures++), lalu di-retry setelah backoff |
+| Konsolidasi gagal | State `failed`, error dicatat, retry dengan backoff 1→2→4→8→10 menit |
+| Konsolidasi sukses | State `idle`, `consecutiveFailures` = 0, `needsConsolidation` false bila tidak ada pending |
+| Sesi idle dengan background work aktif | Konsolidasi ditunda (defer) hingga 3 kali / 15 menit; ringkasan dapat bersifat parsial |
 | Sesi dibuat (child) | Mewarisi snapshot memori parent |
 | Sesi di-fork | Mewarisi snapshot memori sumber |
 | Sesi dihapus | File memori (dan backup corrupt) dihapus |
@@ -57,6 +60,13 @@ disimpan karena hanya mengaburkan percakapan.
 - Child/fork hanya mewarisi snapshot saat pembuatan, lalu divergen; tidak ada sinkronisasi balik.
 - Isi memori hanya ringkasan dan catatan; output mentah tool tidak disimpan.
 
+## Capture policy
+
+- `always`: prompt yang membawa keputusan, error, perintah kerja, referensi file/path, atau prompt panjang.
+- `likely`: prompt lain yang bukan chatter.
+- `noise`: sapaan/pengakuan singkat (`hi`, `ok`, `thanks`, …) dan prompt sangat pendek — **tidak disimpan**.
+- Niat durable disimpan, chatter dibuang.
+
 ## Tool
 
 | Tool | Fungsi |
@@ -65,12 +75,26 @@ disimpan karena hanya mengaburkan percakapan.
 | `memory_recall` | Panggil memori sesi ini (opsional `query`) |
 | `memory_list` | Daftar catatan sesi ini |
 | `memory_forget` | Hapus catatan berdasarkan `id` |
-| `memory_health` | Status konsolidasi sesi ini (jika konsolidasi gagal) |
+| `memory_health` | Status konsolidasi sesi ini (build, drift, state, error, retry, capture counters) |
 
 ## Skill
 
 `@memory-persistent` — memuat kapan harus store/recall, kapan memanggil
 `memory_health`, dan larangan menyimpan output mentah atau secret.
+
+## Catatan operasional
+
+- **Restart server setelah mengubah source plugin.** Loader plugin lokal men-cache evaluasi
+  yang gagal; perubahan source tidak hot-reload otomatis dalam proses yang sama.
+- Saat aktivasi, plugin memeriksa konsistensi graph import (self-check). Jika ada mismatch,
+  aktivasi dibatalkan dengan log `source-tree-inconsistent` (FATAL) dan plugin tidak terdaftar.
+  Perbaiki nama export/import lalu restart server.
+- Konsolidasi menggunakan **panggilan model stateless** (default): hanya prompt yang dibangun
+  dari delta (facts + conversation + notes + activity) yang dikirim; riwayat sesi tidak disertakan.
+  Memori menyimpan facts deterministik plus naratif model opsional; facts tetap ditulis meskipun
+  naratif gagal.
+- Build record (`build.json`) mencatat source hash; drift antar aktivasi dilaporkan lewat
+  `memory_health` dan log.
 
 ## Penyimpanan
 
@@ -78,7 +102,7 @@ disimpan karena hanya mengaburkan percakapan.
 ${XDG_DATA_HOME:-~/.local/share}/opencode/memory-persistent/sessions/<sessionID>.json
 ```
 
-Permission `0600`. Backup file yang gagal diparse berakhir dengan `.json.corrupt.<timestamp>`.
+Permission `0600` untuk file, `0700` untuk direktori. Backup file yang gagal diparse berakhir dengan `.json.corrupt.<timestamp>`. Permission diperbaiki otomatis saat aktivasi (`repairPermissions`).
 
 ## Pengembangan
 
