@@ -120,6 +120,31 @@ describe("synthetic session fixture", () => {
     expect(commands.some((command) => command.includes("json.load(sys.stdin)"))).toBe(true)
   })
 
+  test("the quoted-pipe edge case is discriminating", () => {
+    const commands = fixture
+      .filter((call) => call.tool === "shell" || call.tool === "bash")
+      .map((call) => call.input.command)
+      .filter((command): command is string => typeof command === "string")
+
+    // The fixture carries a quoted pattern whose naive pipe-split yields a
+    // path-like fragment, so a regression to splitting on `|` inside quotes
+    // is observable.
+    const quotedPipe = commands.find(
+      (command) => command.includes("\\|") && command.includes("/opt/data"),
+    )
+    expect(quotedPipe).toBeDefined()
+
+    // A quote-aware scanner yields a single command for this entry.
+    expect(parseShellCommands(quotedPipe!)).toHaveLength(1)
+
+    // A naive split of the same string on `|` would expose a path-like
+    // fragment, so the assertion would fire under a regressed scanner.
+    const naiveFragments = quotedPipe!.split("|").map((fragment) =>
+      fragment.trim().split(/\s+/)[0],
+    )
+    expect(naiveFragments.some((fragment) => fragment.includes("/"))).toBe(true)
+  })
+
   test("the fixture holds no real path, host or credential", () => {
     for (const { pattern, what } of FORBIDDEN_IN_FIXTURE) {
       const found = fixtureText.match(new RegExp(pattern.source, pattern.flags))

@@ -736,7 +736,7 @@
   {
     "tool": "shell",
     "input": {
-      "command": "grep -R \"alpha\\|beta\" /workspace/app/src"
+      "command": "grep -R \"alpha\\|/opt/data\" /workspace/app/src"
     },
     "status": "completed"
   },

@@ -164,7 +164,7 @@ shell("history | tail -5")
 // The two parser edge cases the fixture must keep.
 // ---------------------------------------------------------------------------
 // 1. A pipe inside a quoted pattern is not a command separator.
-shell('grep -R "alpha\\|beta" /workspace/app/src')
+shell('grep -R "alpha\\|/opt/data" /workspace/app/src')
 shell('grep -n "export \\* as\\|export const" /workspace/app/src/index.ts')
 // 2. A command substitution that contains a closing parenthesis.
 shell('ID=$(python3 -c "import json,sys; print(json.load(sys.stdin)[\'data\'][\'id\'])") && bun run build')
