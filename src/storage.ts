@@ -93,20 +93,41 @@ export function logPath(): string {
 
 const locks = new Map<string, Promise<void>>()
 
+/**
+ * Serializes the work on one key.
+ *
+ * The lock is not reentrant: acquiring the same key while it is held waits
+ * for the current holder to release it, so the holder must never call back
+ * into the lock. `updateMemory` therefore writes through the unlocked writer
+ * instead of through `writeMemory`.
+ *
+ * The map holds the chained promise of the acquisition, not the promise the
+ * holder waits on, so the cleanup compares against the chain it installed.
+ * Without that, one entry per session id would stay in the map for the
+ * lifetime of the process.
+ */
 async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = locks.get(key) ?? Promise.resolve()
   let resolve!: () => void
   const next = new Promise<void>((r) => {
     resolve = r
   })
-  locks.set(key, prev.then(() => next))
+  const chain = prev.then(() => next)
+  locks.set(key, chain)
   try {
     await prev
     return await fn()
   } finally {
     resolve()
-    if (locks.get(key) === next) locks.delete(key)
+    // The entry is dropped only while it still belongs to this chain: a later
+    // acquisition for the same key owns the entry now and drops it itself.
+    if (locks.get(key) === chain) locks.delete(key)
   }
+}
+
+/** The number of keys the lock map currently holds. Exposed so the tests can prove it is cleaned. */
+export function lockCount(): number {
+  return locks.size
 }
 
 export function emptyMemory(sessionID: string, parentSnapshotFrom: string | null = null): MemoryFile {
