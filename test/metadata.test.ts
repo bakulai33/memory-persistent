@@ -81,6 +81,45 @@ describe("classifyToolCall", () => {
     expect(entries).toEqual([{ kind: "error", target: "not found", command: null, turnID: undefined }])
   })
 
+  test("redacts a credential in a tool error", () => {
+    const entries = classifyToolCall(
+      "shell",
+      { command: "bun test" },
+      { status: "error", error: "provider rejected the call: api_key=sk-abcdefghijklmnopqrstuvwxyz" },
+    )
+    const error = entries.find((entry) => entry.kind === "error")
+    expect(error?.target).not.toContain("sk-abcdefghijklmnopqrstuvwxyz")
+    expect(error?.target).toContain("[REDACTED]")
+  })
+
+  test("redacts a bearer token in a tool error", () => {
+    const entries = classifyToolCall(
+      "read",
+      { path: "/x" },
+      { status: "error", error: { message: "request failed with Bearer abcdefghijklmnopqrstuvwxyz" } },
+    )
+    const error = entries.find((entry) => entry.kind === "error")
+    expect(error?.target).not.toContain("abcdefghijklmnopqrstuvwxyz")
+    expect(error?.target).toContain("[REDACTED]")
+  })
+
+  test("redacts a credential that sits at the start of a long error", () => {
+    const entries = classifyToolCall(
+      "read",
+      { path: "/x" },
+      { status: "error", error: `api_key=sk-abcdefghijklmnopqrstuvwxyz ${"x".repeat(300)}` },
+    )
+    const error = entries.find((entry) => entry.kind === "error")
+    expect(error?.target).not.toContain("sk-abcdefghijklmnopqrstuvwxyz")
+    expect(error?.target).toContain("[REDACTED]")
+  })
+
+  test("keeps the error target inside its length cap", () => {
+    const entries = classifyToolCall("read", { path: "/x" }, { status: "error", error: "y".repeat(1_000) })
+    const error = entries.find((entry) => entry.kind === "error")
+    expect(error?.target.length).toBe(200)
+  })
+
   test("records both the command and the error of a failed call", () => {
     const entries = classifyToolCall("shell", { command: "bun test" }, { status: "error", error: "boom" })
     expect(entries.map((e) => e.kind)).toEqual(["command", "error"])

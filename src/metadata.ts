@@ -1,4 +1,5 @@
 import type { ActivityEntry } from "./storage.js"
+import { redact } from "./redact.js"
 
 /** Commands whose effect on the project is worth remembering. */
 export const SHELL_ALLOW = new Set([
@@ -203,7 +204,10 @@ export function classifyToolCall(
   }
 
   const error = toolError(event)
-  if (error) result.push({ kind: "error", target: error.slice(0, 200), command: null, turnID })
+  // A provider or a tool error can carry a credential, so it is redacted
+  // before it is stored. The redaction runs before the cap, so a secret is
+  // removed instead of being cut in half.
+  if (error) result.push({ kind: "error", target: redact(error).slice(0, 200), command: null, turnID })
 
   return result
 }
