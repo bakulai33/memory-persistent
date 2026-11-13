@@ -4,6 +4,9 @@ import { retryDelayMs } from "./consolidation.js"
 import { redact } from "./redact.js"
 import type { MemoryFile } from "./storage.js"
 
+/** A logged value is cut short at this length. */
+const ERROR_LIMIT = 300
+
 /**
  * Observability for the plugin: the health report the model can ask for, and
  * the structured log lines that make a silent failure visible.
@@ -161,6 +164,14 @@ export function fileBuildOf(m: MemoryFile): string {
   return typeof m.build === "string" ? m.build : ""
 }
 
+/** Redacts and caps a consolidation error the same way `logEvent` does. */
+function redactError(error: string | null): string | null {
+  if (error === null) return null
+  let text = redact(error)
+  if (text.length > ERROR_LIMIT) text = `${text.slice(0, ERROR_LIMIT)}…`
+  return text
+}
+
 /**
  * Builds the health report of one session.
  *
@@ -174,9 +185,8 @@ export function buildHealthReport(
 ): HealthReport {
   const now = options.now ?? Date.now()
   const fileBuild = fileBuildOf(m)
-  const capture = options.capture ?? captureCounters(m.sessionID)
-  const last =
-    options.lastConsolidation === undefined ? lastConsolidation(m.sessionID) : options.lastConsolidation
+  const capture = options.capture ?? { always: 0, likely: 0, noiseSkipped: 0 }
+  const last = options.lastConsolidation === undefined ? null : options.lastConsolidation
   // A retry is pending only while the backoff has not elapsed yet.
   const delay = m.needsConsolidation ? retryDelayMs(m, now) : 0
 
@@ -184,11 +194,11 @@ export function buildHealthReport(
     build: running.build,
     fileBuild,
     drift: fileBuild !== running.build,
-    sourceTreeOk: options.sourceTreeOk ?? runtime.sourceTreeOk,
+    sourceTreeOk: options.sourceTreeOk ?? true,
     sourceHash: running.sourceHash,
     consolidation: {
       state: m.consolidation.state,
-      error: m.consolidation.error,
+      error: redactError(m.consolidation.error),
       consecutiveFailures: m.consolidation.consecutiveFailures,
       nextRetryInMs: delay > 0 ? delay : null,
     },
@@ -204,9 +214,6 @@ export function buildHealthReport(
 
 /** Every log line of the plugin starts with this prefix. */
 export const LOG_PREFIX = "[memory-persistent] "
-
-/** A logged error is cut short, so a stack trace cannot flood the log. */
-const ERROR_LIMIT = 300
 
 /** A logged value never carries a secret, so every string is redacted first. */
 function formatValue(key: string, value: unknown): string {

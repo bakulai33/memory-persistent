@@ -43,12 +43,15 @@ import { capturePolicy } from "./capture.js"
 import { redact } from "./redact.js"
 import {
   buildHealthReport,
+  captureCounters,
   fileBuildOf,
   healthRuntime,
+  lastConsolidation,
   logDrift,
   logEvent,
   recordCapture,
   recordConsolidation,
+  resetHealthState,
   setHealthRuntime,
 } from "./health.js"
 import { classifyToolCall } from "./metadata.js"
@@ -130,7 +133,7 @@ export default define({
         if (typeof parsed.sourceHash === "string") previous = parsed.sourceHash
       } catch {}
       if (previous !== null && previous !== hash) {
-        console.error(`[memory-persistent] drift source-changed-since-start ${previous} -> ${hash}`)
+        logEvent("drift", { fileBuild: previous, runningBuild: hash })
       }
       mkdirSync(dirname(path), { recursive: true })
       writeFileSync(
@@ -149,7 +152,7 @@ export default define({
         "utf8",
       )
     } catch (error) {
-      console.error(`[memory-persistent] build record could not be written: ${error}`)
+      logEvent("build record", { error: error instanceof Error ? error.message : String(error) })
     }
 
     const options = (ctx.options ?? {}) as Record<string, any>
@@ -242,7 +245,11 @@ export default define({
             const report = buildHealthReport(
               memory,
               { build: runtime.build, sourceHash: runtime.sourceHash },
-              { sourceTreeOk: runtime.sourceTreeOk },
+              {
+                sourceTreeOk: runtime.sourceTreeOk,
+                capture: captureCounters(sessionID),
+                lastConsolidation: lastConsolidation(sessionID),
+              },
             )
             return textResult(JSON.stringify(report, null, 2))
           }),
@@ -360,15 +367,15 @@ export default define({
         deleteFiles: (sessionID) => Effect.promise(() => deleteMemoryFiles(sessionID)),
       })
       if (result.incomplete) {
-        console.error("[memory-persistent] sweep incomplete: session list could not be read, nothing deleted")
+        logEvent("sweep", { status: "incomplete" })
         return
       }
       if (result.deleted.length) {
-        console.error(`[memory-persistent] sweep deleted ${result.deleted.length} orphaned memory file(s)`)
+        logEvent("sweep", { deleted: result.deleted.length })
       }
     }).pipe(
       Effect.catchCause((cause) => {
-        console.error(`[memory-persistent] sweep failed: ${Cause.pretty(cause)}`)
+        logEvent("sweep", { status: "failed", error: Cause.pretty(cause) })
         return Effect.void
       }),
     )
@@ -550,6 +557,7 @@ export default define({
               const id = sanitizeSessionID(sessionID)
               markDeleted(id)
               await deleteMemoryFiles(id)
+              resetHealthState(id)
             } catch {}
           })
         }

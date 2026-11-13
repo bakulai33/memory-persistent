@@ -5,6 +5,8 @@ import { join } from "node:path"
 import { Effect, Stream } from "effect"
 import {
   buildHealthReport,
+  captureCounters,
+  lastConsolidation,
   recordCapture,
   recordConsolidation,
   resetHealthState,
@@ -130,7 +132,10 @@ describe("health report", () => {
 
   test("the default report reads the recorded state of its own session", () => {
     recordCapture("ses_pure", "always")
-    expect(buildHealthReport(emptyMemory("ses_pure"), RUNNING).capture.always).toBe(1)
+    const report = buildHealthReport(emptyMemory("ses_pure"), RUNNING, {
+      capture: captureCounters("ses_pure"),
+    })
+    expect(report.capture.always).toBe(1)
   })
 
   test("the report never carries another session's counters", () => {
@@ -149,8 +154,32 @@ describe("health report", () => {
 
   test("lastConsolidation carries the recorded attempt", () => {
     recordConsolidation("ses_last", { estPromptTokens: 1234, ms: 56, at: "2026-01-01T00:00:00.000Z" })
-    const report = buildHealthReport(emptyMemory("ses_last"), RUNNING)
+    const report = buildHealthReport(emptyMemory("ses_last"), RUNNING, {
+      lastConsolidation: lastConsolidation("ses_last"),
+    })
     expect(report.lastConsolidation).toEqual({ estPromptTokens: 1234, ms: 56, at: "2026-01-01T00:00:00.000Z" })
+  })
+
+  test("consolidation.error is redacted in the report", () => {
+    const memory = emptyMemory("ses_redact")
+    memory.consolidation.error = "token=sk-abcdefghijklmnopqrstuvwxyz"
+    const report = buildHealthReport(memory, RUNNING)
+    expect(report.consolidation.error).not.toContain("sk-abcdefghijklmnopqrstuvwxyz")
+    expect(report.consolidation.error).toContain("[REDACTED]")
+  })
+
+  test("buildHealthReport is pure given explicit inputs", () => {
+    recordCapture("ses_global", "always")
+    const memory = emptyMemory("ses_pure_inputs")
+    const options = {
+      capture: { always: 0, likely: 0, noiseSkipped: 0 },
+      lastConsolidation: null,
+      sourceTreeOk: true,
+    }
+    const first = buildHealthReport(memory, RUNNING, options)
+    recordCapture("ses_global", "always")
+    const second = buildHealthReport(memory, RUNNING, options)
+    expect(second).toEqual(first)
   })
 })
 
@@ -160,7 +189,9 @@ describe("capture counters", () => {
     recordCapture("ses_capture", "likely")
     recordCapture("ses_capture", "likely")
     recordCapture("ses_capture", "noise")
-    const report = buildHealthReport(emptyMemory("ses_capture"), RUNNING)
+    const report = buildHealthReport(emptyMemory("ses_capture"), RUNNING, {
+      capture: captureCounters("ses_capture"),
+    })
     expect(report.capture).toEqual({ always: 1, likely: 2, noiseSkipped: 1 })
   })
 
@@ -168,6 +199,16 @@ describe("capture counters", () => {
     recordCapture("ses_one", "always")
     const other = buildHealthReport(emptyMemory("ses_two"), RUNNING)
     expect(other.capture).toEqual({ always: 0, likely: 0, noiseSkipped: 0 })
+  })
+})
+
+describe("resetHealthState", () => {
+  test("clears a session's counters and last consolidation", () => {
+    recordCapture("ses_reset", "always")
+    recordConsolidation("ses_reset", { estPromptTokens: 10, ms: 5 })
+    resetHealthState("ses_reset")
+    expect(captureCounters("ses_reset")).toEqual({ always: 0, likely: 0, noiseSkipped: 0 })
+    expect(lastConsolidation("ses_reset")).toBeNull()
   })
 })
 
