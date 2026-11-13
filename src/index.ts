@@ -58,7 +58,7 @@ import {
 import { classifyToolCall } from "./metadata.js"
 import { checkSourceTree, sourceHash } from "./selfcheck.js"
 import { BUILD, SCHEMA_VERSION } from "./build.js"
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -150,8 +150,16 @@ export default define({
           null,
           2,
         ),
-        "utf8",
+        { encoding: "utf8", mode: 0o600 },
       )
+      // The mode of a write only applies to a file it creates, so a build
+      // record that already exists keeps its old permissions until they are
+      // corrected here.
+      try {
+        chmodSync(path, 0o600)
+      } catch {
+        // A build record that cannot be tightened is still worth writing.
+      }
     } catch (error) {
       logEvent("build record", { error: error instanceof Error ? error.message : String(error) })
     }

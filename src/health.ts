@@ -4,7 +4,7 @@ import { retryDelayMs } from "./consolidation.js"
 import { redact } from "./redact.js"
 import type { MemoryFile } from "./storage.js"
 import { logPath as storageLogPath } from "./storage.js"
-import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 
 /** A logged value is cut short at this length. */
@@ -261,12 +261,24 @@ export function logEvent(event: string, fields: Record<string, unknown> = {}): v
   try {
     const path = logPath()
     mkdirSync(dirname(path), { recursive: true })
-    appendFileSync(path, `${line}\n`, { encoding: "utf8" })
+    appendFileSync(path, `${line}\n`, { encoding: "utf8", mode: 0o600 })
     let size = 0
+    let mode = 0
     try {
-      size = statSync(path).size
+      const stat = statSync(path)
+      size = stat.size
+      mode = stat.mode & 0o777
     } catch {
       size = 0
+    }
+    // The mode of a write only applies to a file it creates, so a log that
+    // already exists keeps its old permissions until they are corrected here.
+    if (mode !== 0o600) {
+      try {
+        chmodSync(path, 0o600)
+      } catch {
+        // A log that cannot be tightened is still worth writing.
+      }
     }
     if (size > LOG_MAX_BYTES) {
       const content = readFileSync(path, "utf8")
@@ -280,7 +292,12 @@ export function logEvent(event: string, fields: Record<string, unknown> = {}): v
         kept.unshift(lines[i])
         keptBytes += lineBytes
       }
-      writeFileSync(path, kept.length ? `${kept.join("\n")}\n` : "", { encoding: "utf8" })
+      writeFileSync(path, kept.length ? `${kept.join("\n")}\n` : "", { encoding: "utf8", mode: 0o600 })
+      try {
+        chmodSync(path, 0o600)
+      } catch {
+        // The truncation already happened; a tighter mode is best effort.
+      }
     }
   } catch {
     // Logging must never throw into the plugin.

@@ -306,6 +306,17 @@ export async function deleteMemoryFiles(sessionID: string): Promise<void> {
   }
 }
 
+/**
+ * The files that may hold memory, log or build records. They are all private
+ * to the user, so the repair tightens them to 0600.
+ */
+function isPrivateFile(name: string): boolean {
+  if (name.endsWith(".json")) return true
+  if (name.endsWith(".log")) return true
+  // A corrupt backup of a memory file: `<session>.json.corrupt.<timestamp>`.
+  return name.includes(".json.corrupt.")
+}
+
 /** Lists the memory files on disk, including the corrupt backups that a failed parse left behind. */
 export async function repairPermissions(dir?: string): Promise<{ files: number; dirs: number }> {
   const target = dir ?? join(dataRoot(), "memory-persistent")
@@ -335,7 +346,7 @@ export async function repairPermissions(dir?: string): Promise<{ files: number; 
       const full = join(current, entry.name)
       if (entry.isDirectory()) {
         await walk(full)
-      } else if (entry.isFile() && entry.name.endsWith(".json")) {
+      } else if (entry.isFile() && isPrivateFile(entry.name)) {
         try {
           await chmod(full, 0o600)
           files += 1

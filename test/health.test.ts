@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Stream } from "effect"
@@ -368,6 +368,35 @@ describe("the memory_health tool", () => {
     }
     return { ctx, tools }
   }
+
+  test("the build record is written with 0600", async () => {
+    const { ctx } = mockContext("ses_build")
+    const errors = spyOn(console, "error").mockImplementation(() => {})
+    try {
+      await Effect.runPromise(Effect.scoped(plugin.effect(ctx)))
+    } finally {
+      errors.mockRestore()
+    }
+    const path = join(dir, "opencode", "memory-persistent", "build.json")
+    expect(statSync(path).mode & 0o777).toBe(0o600)
+  })
+
+  test("an existing build record is tightened to 0600", async () => {
+    const root = join(dir, "opencode", "memory-persistent")
+    mkdirSync(root, { recursive: true })
+    const path = join(root, "build.json")
+    writeFileSync(path, "{}")
+    chmodSync(path, 0o644)
+
+    const { ctx } = mockContext("ses_build_old")
+    const errors = spyOn(console, "error").mockImplementation(() => {})
+    try {
+      await Effect.runPromise(Effect.scoped(plugin.effect(ctx)))
+    } finally {
+      errors.mockRestore()
+    }
+    expect(statSync(path).mode & 0o777).toBe(0o600)
+  })
 
   test("the tool returns the documented report for its own session", async () => {
     const { ctx, tools } = mockContext("ses_tool")

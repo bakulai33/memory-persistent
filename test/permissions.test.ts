@@ -1,8 +1,9 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test"
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test"
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, chmodSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { repairPermissions, writeMemory, emptyMemory } from "../src/storage"
+import { logEvent } from "../src/health"
 
 describe("permissions", () => {
   let dir: string
@@ -46,6 +47,41 @@ describe("permissions", () => {
     expect(statSync(sub).mode & 0o777).toBe(0o700)
   })
 
+  test("repairPermissions tightens the log and the corrupt backups too", async () => {
+    const root = join(dir, "opencode", "memory-persistent")
+    const sessions = join(root, "sessions")
+    mkdirSync(sessions, { recursive: true })
+
+    const log = join(root, "plugin.log")
+    writeFileSync(log, "line\n")
+    chmodSync(log, 0o644)
+
+    const build = join(root, "build.json")
+    writeFileSync(build, "{}")
+    chmodSync(build, 0o644)
+
+    const backup = join(sessions, "ses_x.json.corrupt.1700000000000")
+    writeFileSync(backup, "{")
+    chmodSync(backup, 0o644)
+
+    const res = await repairPermissions()
+    expect(res.files).toBe(3)
+    expect(statSync(log).mode & 0o777).toBe(0o600)
+    expect(statSync(build).mode & 0o777).toBe(0o600)
+    expect(statSync(backup).mode & 0o777).toBe(0o600)
+  })
+
+  test("repairPermissions leaves an unrelated file alone", async () => {
+    const root = join(dir, "opencode", "memory-persistent")
+    mkdirSync(root, { recursive: true })
+    const other = join(root, "notes.txt")
+    writeFileSync(other, "text")
+    chmodSync(other, 0o644)
+
+    await repairPermissions()
+    expect(statSync(other).mode & 0o777).toBe(0o644)
+  })
+
   test("repairPermissions accepts a target directory", async () => {
     const target = join(dir, "custom")
     mkdirSync(target, { recursive: true })
@@ -69,6 +105,33 @@ describe("permissions", () => {
   test("writeMemory produces 0600", async () => {
     await writeMemory("ses_perm", emptyMemory("ses_perm"))
     const path = join(dir, "opencode", "memory-persistent", "sessions", "ses_perm.json")
+    expect(statSync(path).mode & 0o777).toBe(0o600)
+  })
+
+  test("the plugin log is created with 0600", () => {
+    const errors = spyOn(console, "error").mockImplementation(() => {})
+    try {
+      logEvent("capture", { sid: "ses_perm", tier: "always", turns: 1 })
+    } finally {
+      errors.mockRestore()
+    }
+    const path = join(dir, "opencode", "memory-persistent", "plugin.log")
+    expect(statSync(path).mode & 0o777).toBe(0o600)
+  })
+
+  test("an existing plugin log is tightened to 0600", () => {
+    const root = join(dir, "opencode", "memory-persistent")
+    mkdirSync(root, { recursive: true })
+    const path = join(root, "plugin.log")
+    writeFileSync(path, "old line\n")
+    chmodSync(path, 0o644)
+
+    const errors = spyOn(console, "error").mockImplementation(() => {})
+    try {
+      logEvent("capture", { sid: "ses_perm", tier: "always", turns: 1 })
+    } finally {
+      errors.mockRestore()
+    }
     expect(statSync(path).mode & 0o777).toBe(0o600)
   })
 })
