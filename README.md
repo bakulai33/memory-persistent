@@ -36,7 +36,7 @@ Opsi plugin:
 |---|---|
 | Prompt penting | Ditandai sebagai pending turn (heuristik, tanpa model); policy capture menentukan apakah disimpan |
 | Tool yang mengubah state | Dicatat sebagai activity: file yang diubah, command bermakna, atau error |
-| Setiap request | Memori diinjeksikan sebagai system part (maks 5000 token) |
+| Setiap request | Memori diinjeksikan sebagai system part (maks `tokenBudget` token, default 5000) |
 | Sesi idle | Percakapan + activity dikonsolidasi: state `idle` → `running` → `idle` (sukses) atau `failed` (gagal) |
 | Konsolidasi berjalan > 5 menit tanpa selesai | Attempt dianggap mati, di-recover menjadi `failed` (consecutiveFailures++), lalu di-retry setelah backoff |
 | Konsolidasi gagal | State `failed`, error dicatat, retry dengan backoff 1→2→4→8→10 menit |
@@ -84,8 +84,12 @@ disimpan karena hanya mengaburkan percakapan.
 
 ## Catatan operasional
 
-- **Restart server setelah mengubah source plugin.** Loader plugin lokal men-cache evaluasi
-  yang gagal; perubahan source tidak hot-reload otomatis dalam proses yang sama.
+- **Restart server jika reload source plugin gagal.** Loader plugin lokal hot-reload perubahan
+  source yang konsisten (edit content-only mengevaluasi ulang graph module), tetapi evaluasi
+  yang gagal — mis. import nama yang tidak diekspor target — di-cache dan meracuni setiap
+  reload berikutnya dalam proses yang sama; plugin tetap menjalankan build sebelumnya sampai
+  server di-restart, dan self-check startup melaporkan source tree rusak
+  (`source-tree-inconsistent`).
 - Saat aktivasi, plugin memeriksa konsistensi graph import (self-check). Jika ada mismatch,
   aktivasi dibatalkan dengan log `source-tree-inconsistent` (FATAL) dan plugin tidak terdaftar.
   Perbaiki nama export/import lalu restart server.

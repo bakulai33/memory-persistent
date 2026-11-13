@@ -11,8 +11,10 @@ SyntaxError: Export named '<name>' not found in module '<path>'
 
 The failed evaluation is then cached, so every later reload of that plugin in the same
 server process keeps failing the same way. The process keeps running the previous
-generation of the plugin silently; the only trace is a single `WARN` line in the
-server log. The plugin never recovers until the server is restarted.
+generation of the plugin silently; the only trace is a single WARN line in
+`~/.local/share/opencode/log/opencode.log` of the form
+`level=WARN msg="failed to load plugin" target=<plugin path> ...`. The plugin
+never recovers until the server is restarted.
 
 This was observed with `@opencode/plugin` 2.2.5 (and 2.2.7) on Bun.
 
@@ -90,8 +92,10 @@ digest. The server keeps running the previous generation of the plugin.
 ## Impact
 
 Local plugins silently stop updating for the lifetime of a long-running server. The
-only trace is one `WARN` line in the server log, so the regression is invisible
-during normal use. Renaming an export across versions is enough to trigger it.
+only trace is one WARN line in `~/.local/share/opencode/log/opencode.log`
+(`level=WARN msg="failed to load plugin" target=<plugin path> ...`), so the
+regression is invisible during normal use. Renaming an export across versions is
+enough to trigger it.
 
 ## Workaround
 
