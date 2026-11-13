@@ -21,6 +21,7 @@
   },
   "scripts": {
     "test": "bun test",
-    "check": "bun test && bunx tsc --noEmit"
+    "check": "bun test && bunx tsc --noEmit",
+    "fixtures": "bun run test/fixtures/generate-tool-calls.ts"
   }
 }
