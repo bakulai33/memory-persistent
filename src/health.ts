@@ -3,6 +3,9 @@ import type { CaptureTier } from "./capture.js"
 import { retryDelayMs } from "./consolidation.js"
 import { redact } from "./redact.js"
 import type { MemoryFile } from "./storage.js"
+import { logPath as storageLogPath } from "./storage.js"
+import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { dirname } from "node:path"
 
 /** A logged value is cut short at this length. */
 const ERROR_LIMIT = 300
@@ -50,6 +53,8 @@ export interface HealthReport {
   pending: { turns: number; activity: number; notes: number }
   lastConsolidation: LastConsolidation | null
   capture: CaptureCounters
+  /** Where the plugin's structured log lines are written. */
+  logPath: string
 }
 
 /** The parts of the report that do not come from the memory file. */
@@ -62,6 +67,13 @@ export interface HealthOptions {
   capture?: CaptureCounters
   /** The last consolidation. Defaults to the one recorded for the session. */
   lastConsolidation?: LastConsolidation | null
+  /** Where the plugin log lives. Defaults to the plugin's own log path. */
+  logPath?: string
+}
+
+/** Where the plugin writes its structured log lines. Re-exported from storage. */
+export function logPath(): string {
+  return storageLogPath()
 }
 
 /** The build state of the running plugin. */
@@ -209,11 +221,17 @@ export function buildHealthReport(
     },
     lastConsolidation: last ? { ...last } : null,
     capture: { ...capture },
+    logPath: options.logPath ?? logPath(),
   }
 }
 
 /** Every log line of the plugin starts with this prefix. */
 export const LOG_PREFIX = "[memory-persistent] "
+
+// Cap for the plugin log file: keep the most recent lines so the file cannot
+// grow without bound. 64 KiB is small enough to read at a glance and large
+// enough to hold a useful tail of structured events.
+const LOG_MAX_BYTES = 64 * 1024
 
 /** A logged value never carries a secret, so every string is redacted first. */
 function formatValue(key: string, value: unknown): string {
@@ -236,7 +254,37 @@ export function logEvent(event: string, fields: Record<string, unknown> = {}): v
     if (value === null || value === undefined) continue
     parts.push(`${key}=${formatValue(key, value)}`)
   }
-  console.error(`${LOG_PREFIX}${parts.join(" ")}`)
+  const line = `${LOG_PREFIX}${parts.join(" ")}`
+  console.error(line)
+  // Persist the same line to the plugin's own log file, since the server does
+  // not capture plugin console output. Redaction already happened above.
+  try {
+    const path = logPath()
+    mkdirSync(dirname(path), { recursive: true })
+    appendFileSync(path, `${line}\n`, { encoding: "utf8" })
+    let size = 0
+    try {
+      size = statSync(path).size
+    } catch {
+      size = 0
+    }
+    if (size > LOG_MAX_BYTES) {
+      const content = readFileSync(path, "utf8")
+      const lines = content.split("\n")
+      if (lines.length && lines[lines.length - 1] === "") lines.pop()
+      const kept: string[] = []
+      let keptBytes = 0
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const lineBytes = Buffer.byteLength(lines[i], "utf8") + 1
+        if (kept.length > 0 && keptBytes + lineBytes > LOG_MAX_BYTES) break
+        kept.unshift(lines[i])
+        keptBytes += lineBytes
+      }
+      writeFileSync(path, kept.length ? `${kept.join("\n")}\n` : "", { encoding: "utf8" })
+    }
+  } catch {
+    // Logging must never throw into the plugin.
+  }
 }
 
 /**

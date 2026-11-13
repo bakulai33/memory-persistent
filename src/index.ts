@@ -49,6 +49,7 @@ import {
   lastConsolidation,
   logDrift,
   logEvent,
+  logPath,
   recordCapture,
   recordConsolidation,
   resetHealthState,
@@ -249,6 +250,7 @@ export default define({
                 sourceTreeOk: runtime.sourceTreeOk,
                 capture: captureCounters(sessionID),
                 lastConsolidation: lastConsolidation(sessionID),
+                logPath: logPath(),
               },
             )
             return textResult(JSON.stringify(report, null, 2))

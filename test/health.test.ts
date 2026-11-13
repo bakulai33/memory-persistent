@@ -106,6 +106,7 @@ describe("health report", () => {
       "pending",
       "lastConsolidation",
       "capture",
+      "logPath",
     ])
     expect(Object.keys(report.consolidation)).toEqual(["state", "error", "consecutiveFailures", "nextRetryInMs"])
     expect(Object.keys(report.pending)).toEqual(["turns", "activity", "notes"])
@@ -404,6 +405,7 @@ describe("the memory_health tool", () => {
       "pending",
       "lastConsolidation",
       "capture",
+      "logPath",
     ])
     expect(report.pending).toEqual({ turns: 1, activity: 0, notes: 0 })
     expect(report.build).toBe("0.4.0")

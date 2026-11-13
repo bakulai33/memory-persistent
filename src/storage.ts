@@ -86,6 +86,11 @@ export function memoryPath(sessionID: string): string {
   return join(memoryDir(), `${id}.json`)
 }
 
+/** Where the plugin writes its structured log lines. Next to the sessions dir. */
+export function logPath(): string {
+  return join(dataRoot(), "memory-persistent", "plugin.log")
+}
+
 const locks = new Map<string, Promise<void>>()
 
 async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -218,6 +223,9 @@ async function writeMemoryUnlocked(sessionID: string, memory: MemoryFile): Promi
   const path = memoryPath(id)
   memory.sessionID = id
   memory.updatedAt = new Date().toISOString()
+  // The build that last wrote the file is always the running build: a migration
+  // is read-only and never stamps, so drift clears after the next real write.
+  memory.build = BUILD
   await mkdir(dirname(path), { recursive: true })
   const tmp = `${path}.tmp.${process.pid}.${Date.now()}.${randomUUID()}`
   await writeFile(tmp, JSON.stringify(memory, null, 2), { encoding: "utf8", mode: 0o600 })

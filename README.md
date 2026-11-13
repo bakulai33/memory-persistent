@@ -100,7 +100,12 @@ disimpan karena hanya mengaburkan percakapan.
 
 ```
 ${XDG_DATA_HOME:-~/.local/share}/opencode/memory-persistent/sessions/<sessionID>.json
+${XDG_DATA_HOME:-~/.local/share}/opencode/memory-persistent/plugin.log
 ```
+
+File log plugin (`plugin.log`) memuat baris terstruktur `[memory-persistent] ...` yang tidak
+ditangkap server; dibatasi 64 KiB (tail terbaru dipertahankan). Path-nya juga dilaporkan
+oleh `memory_health` (`logPath`).
 
 Permission `0600` untuk file, `0700` untuk direktori. Backup file yang gagal diparse berakhir dengan `.json.corrupt.<timestamp>`. Permission diperbaiki otomatis saat aktivasi (`repairPermissions`).
 
