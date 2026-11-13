@@ -30,7 +30,6 @@ import {
 import {
   canConsolidate,
   shouldConsolidate,
-  retryDelayMs,
   beginAttempt,
   finishSuccess,
   finishFailure,
@@ -42,6 +41,16 @@ import { sweep, type SessionLister } from "./sweep.js"
 import { extractUserExcerpt } from "./heuristics.js"
 import { capturePolicy } from "./capture.js"
 import { redact } from "./redact.js"
+import {
+  buildHealthReport,
+  fileBuildOf,
+  healthRuntime,
+  logDrift,
+  logEvent,
+  recordCapture,
+  recordConsolidation,
+  setHealthRuntime,
+} from "./health.js"
 import { classifyToolCall } from "./metadata.js"
 import { checkSourceTree, sourceHash } from "./selfcheck.js"
 import { BUILD, SCHEMA_VERSION } from "./build.js"
@@ -99,6 +108,7 @@ export default define({
     // running the previous generation forever. Refuse activation loudly instead.
     const mismatches = checkSourceTree(dir)
     if (mismatches.length > 0) {
+      setHealthRuntime({ build: BUILD, sourceHash: "", sourceTreeOk: false })
       for (const mismatch of mismatches) {
         console.error(
           `[memory-persistent] FATAL source-tree-inconsistent importer=${mismatch.importer} from=${mismatch.from} missing=${mismatch.missing.join(",")}`,
@@ -110,6 +120,8 @@ export default define({
     // Record this generation's source hash so the next activation can spot a stale
     // process. A missing or unreadable build record is not an error.
     const hash = sourceHash(dir)
+    setHealthRuntime({ build: BUILD, sourceHash: hash, sourceTreeOk: true })
+    logEvent("activation", { build: BUILD, schema: SCHEMA_VERSION, sourceHash: hash })
     try {
       const path = buildInfoPath()
       let previous: string | null = null
@@ -225,19 +237,13 @@ export default define({
           Effect.promise(async () => {
             const sessionID = sanitizeSessionID(context.sessionID)
             const memory = await loadMemory(sessionID)
-            const report = {
-              sessionID,
-              summaryLen: memory.summary.length,
-              pendingTurns: memory.pendingTurns.length,
-              pendingActivity: memory.pendingActivity.length,
-              needsConsolidation: memory.needsConsolidation,
-              lastAttemptAt: memory.consolidation.lastAttemptAt,
-              lastSuccessAt: memory.consolidation.state === "idle" ? memory.consolidation.finishedAt : null,
-              lastFailure: memory.consolidation.error,
-              failureCount: memory.consolidation.consecutiveFailures,
-              consolidationState: memory.consolidation.state,
-              nextRetryInMs: memory.needsConsolidation ? retryDelayMs(memory) : null,
-            }
+            const runtime = healthRuntime()
+            logDrift(sessionID, fileBuildOf(memory))
+            const report = buildHealthReport(
+              memory,
+              { build: runtime.build, sourceHash: runtime.sourceHash },
+              { sourceTreeOk: runtime.sourceTreeOk },
+            )
             return textResult(JSON.stringify(report, null, 2))
           }),
       })
@@ -267,8 +273,13 @@ export default define({
           if (!text.trim()) return
           trackPrompt(sessionID, event.messageID)
           const tier = capturePolicy(text)
-          if (tier === "noise") return
+          if (tier === "noise") {
+            recordCapture(sessionID, tier)
+            logEvent("capture", { sid: sessionID, tier, turns: 0 })
+            return
+          }
           const memory = await loadMemory(sessionID)
+          logDrift(sessionID, fileBuildOf(memory))
           addPendingTurn(memory, {
             turnId: `${event.sessionID}:${event.messageID}`,
             messageID: event.messageID,
@@ -277,7 +288,11 @@ export default define({
             tier,
           })
           await saveMemory(sessionID, memory)
-        } catch {}
+          recordCapture(sessionID, tier)
+          logEvent("capture", { sid: sessionID, tier, turns: 1 })
+        } catch (err: any) {
+          logEvent("hook-error", { hook: "prompt", error: err instanceof Error ? err.message : String(err) })
+        }
       }),
     )
 
@@ -289,9 +304,23 @@ export default define({
           const entries = classifyToolCall(event.tool, event.input, event, lastPromptMessageID.get(sessionID))
           if (entries.length === 0) return
           const memory = await loadMemory(sessionID)
-          for (const entry of entries) addActivity(memory, entry)
+          logDrift(sessionID, fileBuildOf(memory))
+          for (const entry of entries) {
+            addActivity(memory, entry)
+            const stored = memory.pendingActivity.find(
+              (item) => item.kind === entry.kind && item.target === entry.target,
+            )
+            logEvent("activity", {
+              sid: sessionID,
+              kind: entry.kind,
+              target: entry.target,
+              count: stored?.count ?? 1,
+            })
+          }
           await saveMemory(sessionID, memory)
-        } catch {}
+        } catch (err: any) {
+          logEvent("hook-error", { hook: "activity", error: err instanceof Error ? err.message : String(err) })
+        }
       }),
     )
 
@@ -311,7 +340,9 @@ export default define({
             text: `Session Memory (per-session, max ${budget} tokens):\n${injection}`,
             metadata: { source: "memory-persistent" },
           })
-        } catch {}
+        } catch (err: any) {
+          logEvent("hook-error", { hook: "context", error: err instanceof Error ? err.message : String(err) })
+        }
       }),
     )
 
@@ -376,81 +407,128 @@ export default define({
           }
         })
 
-        if (!deferred) {
-          const fallbackNote = backgroundCount > 0
-            ? "\n\nCatatan: background work mungkin masih berjalan; ringkasan dapat belum lengkap."
-            : ""
-          // A failed model call must not discard the facts. It becomes an empty
-          // narrative, and the apply phase still records the deterministic half.
-          let narrativeError: string | null = null
-          // Three-phase consolidation: collect and apply each take the per-session
-          // lock internally; generate runs between them with no lock held.
-          yield* Effect.promise(() =>
-            runConsolidation({
-              collect: async () =>
-                (
-                  await updateMemory(sessionID, (m) => {
-                    if (!shouldConsolidate(m)) return null
-                    if (!canConsolidate(m)) return null
-                    beginAttempt(m, deltaAttemptId())
-                    return collectDelta(m)
+        if (deferred) {
+          logEvent("deferral", { sid: sessionID, reason: "background" })
+          return
+        }
+
+        const fallbackNote = backgroundCount > 0
+          ? "\n\nCatatan: background work mungkin masih berjalan; ringkasan dapat belum lengkap."
+          : ""
+        let narrativeError: string | null = null
+        let estPromptTokens = 0
+        const attemptStartedAt = Date.now()
+        const finishAttempt = () => {
+          const ms = Date.now() - attemptStartedAt
+          recordConsolidation(sessionID, {
+            estPromptTokens,
+            ms,
+            at: new Date(attemptStartedAt).toISOString(),
+          })
+          return ms
+        }
+        yield* Effect.promise(() =>
+          runConsolidation({
+            collect: async () =>
+              (
+                await updateMemory(sessionID, (m) => {
+                  if (!shouldConsolidate(m)) return null
+                  if (!canConsolidate(m)) return null
+                  beginAttempt(m, deltaAttemptId())
+                  return collectDelta(m)
+                })
+              ).value,
+            generate: async (delta) => {
+              try {
+                const prompt = buildConsolidationPrompt(delta, Math.floor(budget * 0.9)) + fallbackNote
+                estPromptTokens = estimatePromptTokens(prompt)
+                logEvent("consolidation start", {
+                  sid: sessionID,
+                  attempt: delta.attemptId,
+                  estPromptTokens,
+                  mode: consolidationMode,
+                  turns: delta.turns.length,
+                  activity: delta.activityIds.length,
+                })
+
+                const sessionScoped = async () => {
+                  const outcome = await Effect.runPromiseExit(ctx.session.generate({ sessionID, prompt }))
+                  if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
+                  return String(outcome.value?.text ?? "").trim()
+                }
+
+                const retryLogged = async (
+                  run: () => Promise<string>,
+                  onFirstFailure: (error: string) => void,
+                ): Promise<string> => {
+                  let first = true
+                  return retryOnce(async () => {
+                    try {
+                      return await run()
+                    } catch (err) {
+                      if (first) {
+                        first = false
+                        onFirstFailure(err instanceof Error ? err.message : String(err))
+                      }
+                      throw err
+                    }
                   })
-                ).value,
-              generate: async (delta) => {
-                try {
-                  const prompt = buildConsolidationPrompt(delta, Math.floor(budget * 0.9)) + fallbackNote
-                  const estPromptTokens = estimatePromptTokens(prompt)
-                  console.error(
-                    `[memory-persistent] consolidation mode=${consolidationMode} estPromptTokens=${estPromptTokens} turns=${delta.turns.length} activity=${delta.activityIds.length}`,
+                }
+
+                if (consolidationMode === "session") {
+                  return await retryLogged(sessionScoped, (error) =>
+                    logEvent("consolidation retry", { sid: sessionID, attempt: 1, error }),
                   )
+                }
 
-                  const sessionScoped = async () => {
-                    const outcome = await Effect.runPromiseExit(ctx.session.generate({ sessionID, prompt }))
-                    if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
-                    return String(outcome.value?.text ?? "").trim()
-                  }
-
-                  if (consolidationMode === "session") return await retryOnce(sessionScoped)
-
-                  // No session is passed, so the provider sees the prompt and model only.
-                  // A missing model is valid: the generator falls back to the default.
-                  const info = await Effect.runPromiseExit(ctx.session.get({ sessionID }))
-                  const model = Exit.isSuccess(info) ? info.value?.model : undefined
-                  return await retryOnce(async () => {
+                const info = await Effect.runPromiseExit(ctx.session.get({ sessionID }))
+                const model = Exit.isSuccess(info) ? info.value?.model : undefined
+                return await retryLogged(
+                  async () => {
                     const outcome = await Effect.runPromiseExit(
                       ctx.experimental.generate.text(model ? { prompt, model } : { prompt }),
                     )
                     if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
                     return String(outcome.value?.text ?? "").trim()
-                  })
-                } catch (err) {
-                  narrativeError = err instanceof Error ? err.message : String(err)
-                  console.error(`[memory-persistent] consolidation narrative unavailable: ${narrativeError}`)
-                  return ""
-                }
-              },
-              apply: async (delta, narrative) => {
-                const error = narrative.trim() ? null : (narrativeError ?? "model returned no narrative")
-                await updateMemory(sessionID, (m) => {
-                  applyDelta(m, delta, narrative, budget)
-                  if (error === null) {
-                    finishSuccess(m, delta.attemptId)
-                  } else if (finishFailure(m, delta.attemptId, error)) {
-                    console.error(`[memory-persistent] consolidation narrative failed: ${error}`)
-                  }
-                })
-              },
-              fail: async (delta, error) => {
-                await updateMemory(sessionID, (m) => {
+                  },
+                  (error) => logEvent("consolidation retry", { sid: sessionID, attempt: 1, error }),
+                )
+              } catch (err) {
+                narrativeError = err instanceof Error ? err.message : String(err)
+                return ""
+              }
+            },
+            apply: async (delta, narrative) => {
+              const error = narrative.trim() ? null : (narrativeError ?? "model returned no narrative")
+              await updateMemory(sessionID, (m) => {
+                applyDelta(m, delta, narrative, budget)
+                if (error === null) {
+                  finishSuccess(m, delta.attemptId)
+                } else {
                   finishFailure(m, delta.attemptId, error)
+                }
+              })
+              const ms = finishAttempt()
+              if (error === null) {
+                logEvent("consolidation ok", {
+                  sid: sessionID,
+                  attempt: delta.attemptId,
+                  ms,
+                  tokens: estimatePromptTokens(narrative),
                 })
-                console.error(`[memory-persistent] consolidation failed: ${error}`)
-              },
-            }),
-          )
-        }
-
-        if (deferred) return
+              } else {
+                logEvent("consolidation failed", { sid: sessionID, attempt: delta.attemptId, ms, error })
+              }
+            },
+            fail: async (delta, error) => {
+              await updateMemory(sessionID, (m) => {
+                finishFailure(m, delta.attemptId, error)
+              })
+              const ms = finishAttempt()
+              logEvent("consolidation failed", { sid: sessionID, attempt: delta.attemptId, ms, error })
+            },
+          }),
+        )
 
         if (sweepEnabled && Date.now() - lastSweepAt >= sweepIntervalMs) {
           lastSweepAt = Date.now()

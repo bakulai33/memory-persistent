@@ -1,0 +1,249 @@
+import { BUILD } from "./build.js"
+import type { CaptureTier } from "./capture.js"
+import { retryDelayMs } from "./consolidation.js"
+import { redact } from "./redact.js"
+import type { MemoryFile } from "./storage.js"
+
+/**
+ * Observability for the plugin: the health report the model can ask for, and
+ * the structured log lines that make a silent failure visible.
+ *
+ * The report is a pure function of its inputs, so it can be unit-tested
+ * without a running plugin.
+ */
+
+/** How many prompts each capture tier has seen in one session. */
+export interface CaptureCounters {
+  always: number
+  likely: number
+  noiseSkipped: number
+}
+
+/** What the last consolidation attempt of a session cost. */
+export interface LastConsolidation {
+  estPromptTokens: number
+  ms: number
+  at: string
+}
+
+/** The state of the plugin for one session, as the `memory_health` tool reports it. */
+export interface HealthReport {
+  /** The build of the running plugin. */
+  build: string
+  /** The build that last wrote the memory file. */
+  fileBuild: string
+  /** True when the memory file was written by another build. */
+  drift: boolean
+  /** True when the running source tree can link. */
+  sourceTreeOk: boolean
+  /** The hash of the running source tree. */
+  sourceHash: string
+  consolidation: {
+    state: string
+    error: string | null
+    consecutiveFailures: number
+    nextRetryInMs: number | null
+  }
+  pending: { turns: number; activity: number; notes: number }
+  lastConsolidation: LastConsolidation | null
+  capture: CaptureCounters
+}
+
+/** The parts of the report that do not come from the memory file. */
+export interface HealthOptions {
+  /** The moment the report is computed. Defaults to now. */
+  now?: number
+  /** Whether the running source tree can link. Defaults to true. */
+  sourceTreeOk?: boolean
+  /** The capture counters. Defaults to the ones recorded for the session. */
+  capture?: CaptureCounters
+  /** The last consolidation. Defaults to the one recorded for the session. */
+  lastConsolidation?: LastConsolidation | null
+}
+
+/** The build state of the running plugin. */
+export interface HealthRuntime {
+  build: string
+  sourceHash: string
+  sourceTreeOk: boolean
+}
+
+// The sessions are bounded so a long-running server does not keep one entry
+// per session it ever saw.
+const SESSION_LIMIT = 256
+
+interface SessionState {
+  capture: CaptureCounters
+  lastConsolidation: LastConsolidation | null
+}
+
+const sessions = new Map<string, SessionState>()
+
+// The drift is logged once per build pair, so a drifted session does not
+// repeat the line on every turn.
+const driftLogged = new Map<string, string>()
+
+let runtime: HealthRuntime = { build: BUILD, sourceHash: "", sourceTreeOk: true }
+
+function emptyCounters(): CaptureCounters {
+  return { always: 0, likely: 0, noiseSkipped: 0 }
+}
+
+function stateFor(sessionID: string): SessionState {
+  let state = sessions.get(sessionID)
+  if (!state) {
+    state = { capture: emptyCounters(), lastConsolidation: null }
+    sessions.set(sessionID, state)
+    while (sessions.size > SESSION_LIMIT) {
+      const oldest = sessions.keys().next()
+      if (oldest.done) break
+      sessions.delete(oldest.value)
+    }
+  }
+  return state
+}
+
+/** Records the build of the running plugin, so a report can name it. */
+export function setHealthRuntime(next: HealthRuntime): void {
+  runtime = { ...next }
+}
+
+/** The build state of the running plugin. */
+export function healthRuntime(): HealthRuntime {
+  return { ...runtime }
+}
+
+/** Counts one captured or skipped prompt under the tier the policy gave it. */
+export function recordCapture(sessionID: string, tier: CaptureTier): void {
+  const counters = stateFor(sessionID).capture
+  if (tier === "always") counters.always += 1
+  else if (tier === "likely") counters.likely += 1
+  else counters.noiseSkipped += 1
+}
+
+/** Records what the last consolidation attempt of a session cost. */
+export function recordConsolidation(
+  sessionID: string,
+  info: { estPromptTokens: number; ms: number; at?: string },
+): void {
+  stateFor(sessionID).lastConsolidation = {
+    estPromptTokens: Math.max(0, Math.trunc(info.estPromptTokens)),
+    ms: Math.max(0, Math.trunc(info.ms)),
+    at: info.at ?? new Date().toISOString(),
+  }
+}
+
+/** The capture counters of one session. */
+export function captureCounters(sessionID: string): CaptureCounters {
+  const state = sessions.get(sessionID)
+  return state ? { ...state.capture } : emptyCounters()
+}
+
+/** The last consolidation of one session, or null when none ran. */
+export function lastConsolidation(sessionID: string): LastConsolidation | null {
+  const state = sessions.get(sessionID)
+  return state?.lastConsolidation ? { ...state.lastConsolidation } : null
+}
+
+/** Forgets the recorded state of one session, or of every session. */
+export function resetHealthState(sessionID?: string): void {
+  if (sessionID === undefined) {
+    sessions.clear()
+    driftLogged.clear()
+    return
+  }
+  sessions.delete(sessionID)
+  driftLogged.delete(sessionID)
+}
+
+/** The build that last wrote a memory file. */
+export function fileBuildOf(m: MemoryFile): string {
+  return typeof m.build === "string" ? m.build : ""
+}
+
+/**
+ * Builds the health report of one session.
+ *
+ * The report only ever describes the session it is given: the counters come
+ * from that session's own record, so no other session can leak into it.
+ */
+export function buildHealthReport(
+  m: MemoryFile,
+  running: { build: string; sourceHash: string },
+  options: HealthOptions = {},
+): HealthReport {
+  const now = options.now ?? Date.now()
+  const fileBuild = fileBuildOf(m)
+  const capture = options.capture ?? captureCounters(m.sessionID)
+  const last =
+    options.lastConsolidation === undefined ? lastConsolidation(m.sessionID) : options.lastConsolidation
+  // A retry is pending only while the backoff has not elapsed yet.
+  const delay = m.needsConsolidation ? retryDelayMs(m, now) : 0
+
+  return {
+    build: running.build,
+    fileBuild,
+    drift: fileBuild !== running.build,
+    sourceTreeOk: options.sourceTreeOk ?? runtime.sourceTreeOk,
+    sourceHash: running.sourceHash,
+    consolidation: {
+      state: m.consolidation.state,
+      error: m.consolidation.error,
+      consecutiveFailures: m.consolidation.consecutiveFailures,
+      nextRetryInMs: delay > 0 ? delay : null,
+    },
+    pending: {
+      turns: m.pendingTurns.length,
+      activity: m.pendingActivity.length,
+      notes: m.notes.length,
+    },
+    lastConsolidation: last ? { ...last } : null,
+    capture: { ...capture },
+  }
+}
+
+/** Every log line of the plugin starts with this prefix. */
+export const LOG_PREFIX = "[memory-persistent] "
+
+/** A logged error is cut short, so a stack trace cannot flood the log. */
+const ERROR_LIMIT = 300
+
+/** A logged value never carries a secret, so every string is redacted first. */
+function formatValue(key: string, value: unknown): string {
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "0"
+  if (typeof value === "boolean") return value ? "true" : "false"
+  let text = redact(String(value))
+  if (key === "error" && text.length > ERROR_LIMIT) text = `${text.slice(0, ERROR_LIMIT)}…`
+  if (text === "") return '""'
+  if (/[\s"]/.test(text)) return JSON.stringify(text)
+  return text
+}
+
+/**
+ * Writes one structured log line: the prefix, the event, then key=value pairs.
+ * A value that carries a space is quoted, so the line stays parseable.
+ */
+export function logEvent(event: string, fields: Record<string, unknown> = {}): void {
+  const parts = [event]
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === null || value === undefined) continue
+    parts.push(`${key}=${formatValue(key, value)}`)
+  }
+  console.error(`${LOG_PREFIX}${parts.join(" ")}`)
+}
+
+/**
+ * Reports a build drift between a memory file and the running plugin. The same
+ * pair is reported once; a session that already drifted is not repeated.
+ */
+export function logDrift(sessionID: string, fileBuild: string, runningBuild: string = runtime.build): void {
+  if (fileBuild === runningBuild) return
+  if (driftLogged.get(sessionID) === fileBuild) return
+  driftLogged.set(sessionID, fileBuild)
+  while (driftLogged.size > SESSION_LIMIT) {
+    const oldest = driftLogged.keys().next()
+    if (oldest.done) break
+    driftLogged.delete(oldest.value)
+  }
+  logEvent("drift", { sid: sessionID, fileBuild, runningBuild })
+}
