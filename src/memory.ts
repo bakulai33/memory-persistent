@@ -84,6 +84,9 @@ export function allocate(sections: (Section | undefined)[], budget: number): num
   return allowance
 }
 
+/** Header yang menandai narasi model sebagai belum terverifikasi. */
+const NARRATIVE_LABEL = "Notes (model-generated, unverified):"
+
 export function buildInjection(memory: MemoryFile, budget = 5000): string {
   let summaryCore = ""
   if (memory.summaryFacts || memory.summaryFactsInherited || memory.summaryNarrative) {
@@ -97,7 +100,11 @@ export function buildInjection(memory: MemoryFile, budget = 5000): string {
       ? `${ownFacts}\n\nInherited from parent session:\n${inheritedFacts}`
       : ownFacts
     const factsPart = truncateFacts(factsText, factsBudget)
-    const narrativePart = fitNarrative(factsPart, (memory.summaryNarrative ?? "").trim(), narrativeBudget, summaryBudget)
+    const narrativeRaw = (memory.summaryNarrative ?? "").trim()
+    const narrativeFitted = fitNarrative(factsPart, narrativeRaw, narrativeBudget, summaryBudget)
+    const narrativePart = narrativeFitted
+      ? `${NARRATIVE_LABEL}\n${narrativeFitted}`
+      : ""
     summaryCore = [factsPart, narrativePart].filter(Boolean).join("\n\n")
     if (defaultTokenCounter(summaryCore) > summaryBudget) summaryCore = truncateToTokenBudget(summaryCore, summaryBudget)
   } else if (memory.summary) {
@@ -128,6 +135,43 @@ export function buildInjection(memory: MemoryFile, budget = 5000): string {
     if (piece) parts.push(piece)
   })
   return parts.join("\n\n")
+}
+
+/**
+ * Builds the payload returned by `memory_recall`, keeping the pure assembly logic
+ * testable without the plugin loader. Facts are reported as stored: `summaryFacts`
+ * holds this session's own facts, `summaryFactsInherited` the parent's facts.
+ */
+export function buildRecallPayload(
+  memory: MemoryFile,
+  budget = 5000,
+  query?: string,
+): {
+  summary: string
+  summaryFacts: string
+  summaryFactsInherited: string
+  summaryNarrative: string
+  summaryNarrativeVerified: boolean
+  notes: MemoryFile["notes"]
+  pendingTurns: string[]
+  injection: string
+} {
+  const injection = buildInjection(memory, budget)
+  let notes = memory.notes
+  if (query) {
+    const q = String(query).toLowerCase()
+    notes = notes.filter((n) => n.text.toLowerCase().includes(q) || n.tags.some((t) => t.toLowerCase().includes(q)))
+  }
+  return {
+    summary: memory.summary,
+    summaryFacts: memory.summaryFacts,
+    summaryFactsInherited: memory.summaryFactsInherited,
+    summaryNarrative: memory.summaryNarrative,
+    summaryNarrativeVerified: false,
+    notes,
+    pendingTurns: memory.pendingTurns.map((t) => t.userExcerpt),
+    injection,
+  }
 }
 
 /** Cuts at a line boundary so a decision is never cut in half. */

@@ -7,6 +7,7 @@ import {
   appendNote,
   removeNote,
   buildInjection,
+  buildRecallPayload,
   buildConsolidationInput,
   allocate,
 } from "../src/memory"
@@ -206,5 +207,25 @@ describe("memory", () => {
     const wait = retryDelayMs(m)
     expect(wait).toBeGreaterThan(0)
     expect(wait).toBeLessThanOrEqual(60_000)
+  })
+
+  test("injeksiMenandaiNarasiSebagaiUnverified", () => {
+    const m = emptyMemory("ses_unv")
+    m.summaryFacts = "- file: /a.ts"
+    m.summaryNarrative = "Test suite lulus dengan 12 test."
+    const inj = buildInjection(m, 5000)
+    expect(inj).toContain("unverified")
+    expect(inj).toContain("model-generated")
+    // fakta deterministik TIDAK diberi label
+    expect(inj).not.toContain("unverified\n- file")
+  })
+
+  test("payloadRecallMenyertakanPenandaNarasi", () => {
+    const m = emptyMemory("ses_recall")
+    m.summaryFacts = "- file: /a.ts"
+    m.summaryNarrative = "Test suite lulus dengan 12 test."
+    const payload = buildRecallPayload(m, 5000)
+    expect(payload.summaryNarrativeVerified).toBe(false)
+    expect(payload.injection).toContain("unverified")
   })
 })

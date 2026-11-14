@@ -18,6 +18,7 @@ import {
   removeNote,
   buildConsolidationPrompt,
   buildInjection,
+  buildRecallPayload,
   collectDelta,
   applyDelta,
   runConsolidation,
@@ -195,20 +196,7 @@ export default define({
           Effect.promise(async () => {
             const sessionID = sanitizeSessionID(context.sessionID)
             const memory = await loadMemory(sessionID)
-            const injection = buildInjection(memory, budget)
-            let notes = memory.notes
-            if (input.query) {
-              const q = String(input.query).toLowerCase()
-              notes = notes.filter((n) => n.text.toLowerCase().includes(q) || n.tags.some((t) => t.toLowerCase().includes(q)))
-            }
-            const payload = {
-              summary: memory.summary,
-              summaryFacts: memory.summaryFacts,
-              summaryNarrative: memory.summaryNarrative,
-              notes,
-              pendingTurns: memory.pendingTurns.map((t) => t.userExcerpt),
-              injection,
-            }
+            const payload = buildRecallPayload(memory, budget, input.query)
             return textResult(JSON.stringify(payload, null, 2))
           }),
       })
