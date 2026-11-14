@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test"
-import { parseShellCommands, classifyToolCall, SHELL_ALLOW } from "../src/metadata"
+import { parseShellCommands, classifyToolCall, SHELL_ALLOW, normalizeActivityTarget } from "../src/metadata"
+import { emptyMemory, addActivity } from "../src/storage"
 
 describe("parseShellCommands", () => {
   test("reads the command name of a chained invocation", () => {
@@ -158,5 +159,41 @@ describe("classifyToolCall", () => {
     for (const trivial of ["cd", "ls", "cat", "grep", "find", "echo", "pwd", "which", "head", "tail", "sed", "awk"]) {
       expect(SHELL_ALLOW.has(trivial)).toBe(false)
     }
+  })
+
+  test("errorMultiBarisJadiSatuBaris", () => {
+    const entries = classifyToolCall("bash", { command: "bun x" }, {
+      status: "error",
+      error: "Could not find oldString in /a.ts.\n\nThe closest lines in the file:\n249:  foo",
+    })
+    const err = entries.find((e) => e.kind === "error")!
+    expect(err.target).not.toContain("\n")
+    expect(err.target).toContain("The closest lines in the file: 249: foo")
+  })
+
+  test("fileTargetDenganOldStringDipangkasKePath", () => {
+    const entries = classifyToolCall("edit", {
+      path: '/proj/src/metadata.ts\noldString="""const A = 1"""\nnewString="""const A = 2"""',
+      oldString: "x", newString: "y",
+    }, {})
+    const file = entries.find((e) => e.kind === "file")!
+    expect(file.target).toBe("/proj/src/metadata.ts")
+    expect(file.target).not.toContain("oldString")
+    expect(file.target).not.toContain("\n")
+  })
+
+  test("fileTargetTidakDiRedact", () => {
+    const entries = classifyToolCall("edit", { path: "/proj/src/token.ts" }, {})
+    expect(entries.find((e) => e.kind === "file")!.target).toBe("/proj/src/token.ts")
+  })
+
+  test("targetMultiBarisTidakMasukKeFacts", async () => {
+    const m = emptyMemory("ses_nl")
+    const entries = classifyToolCall("bash", { command: "bun x" }, {
+      status: "error", error: "line1\nline2\nline3",
+    })
+    for (const e of entries) addActivity(m, e as any)
+    const facts = m.pendingActivity.map((a) => `- ${a.kind}: ${a.target}`).join("\n")
+    expect(facts.split("\n").every((l) => l.startsWith("- "))).toBe(true)
   })
 })

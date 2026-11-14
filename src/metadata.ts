@@ -172,6 +172,37 @@ function toolError(event: { status?: string; error?: unknown }): string | undefi
   return error?.message ?? "error"
 }
 
+/** Batas panjang target activity; di atas ini itu bukan path/pesan ringkas. */
+const MAX_TARGET_CHARS = 400
+
+/**
+ * Menormalisasi target activity sebelum disimpan.
+ *
+ * - `file`   : hanya path — ambil baris pertama, buang sisa blok argumen
+ *              (oldString=/newString=), tolak yang bukan path.
+ * - `error`  : newlines -> spasi (tool error bisa memuat body skrip).
+ * - `command`: tidak diubah (sudah dibatasi classifier).
+ *
+ * Catatan: `redact()` TIDAK boleh dipakai di sini untuk `file` — ia merusak path
+ * kode (mis. "token = tokens[cursor]!" -> "[REDACTED]").
+ */
+export function normalizeActivityTarget(kind: "file" | "command" | "error", target: string): string {
+  if (kind === "file") {
+    const firstLine = target.split("\n", 1)[0]!.trim()
+    const cleaned = firstLine
+      .replace(/oldString=.*$/s, "")
+      .replace(/newString=.*$/s, "")
+      .trim()
+    if (!cleaned || cleaned.length > MAX_TARGET_CHARS) return ""
+    return cleaned
+  }
+  if (kind === "error") {
+    const flattened = target.replace(/\s+/g, " ").trim()
+    return flattened.length > MAX_TARGET_CHARS ? `${flattened.slice(0, MAX_TARGET_CHARS)}…` : flattened
+  }
+  return target
+}
+
 /**
  * Turns a finished tool call into the activity worth remembering.
  * Read-only tools and unknown commands contribute nothing; errors always do.
@@ -188,7 +219,10 @@ export function classifyToolCall(
 
   if (FILE_TOOLS.has(name)) {
     const path = args.path ?? args.filePath ?? args.file
-    if (typeof path === "string" && path.trim()) result.push({ kind: "file", target: path, command: null, turnID })
+    if (typeof path === "string" && path.trim()) {
+      const fileTarget = normalizeActivityTarget("file", path)
+      if (fileTarget) result.push({ kind: "file", target: fileTarget, command: null, turnID })
+    }
   } else if (SHELL_TOOLS.has(name)) {
     const command = args.command
     if (typeof command === "string") {
@@ -207,7 +241,7 @@ export function classifyToolCall(
   // A provider or a tool error can carry a credential, so it is redacted
   // before it is stored. The redaction runs before the cap, so a secret is
   // removed instead of being cut in half.
-  if (error) result.push({ kind: "error", target: redact(error).slice(0, 200), command: null, turnID })
+  if (error) result.push({ kind: "error", target: normalizeActivityTarget("error", redact(error).slice(0, 200)), command: null, turnID })
 
   return result
 }
