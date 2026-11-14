@@ -10,6 +10,10 @@ async function storeNote(sid: string, text: string) {
   return value.id
 }
 
+async function activityHook(sid: string, entries: Parameters<typeof addActivity>[1][]) {
+  await updateMemory(sid, (m) => { for (const e of entries) addActivity(m, e) })
+}
+
 describe("concurrency", () => {
   let dir: string
   let orig: string | undefined
@@ -69,5 +73,17 @@ describe("concurrency", () => {
     await Promise.all(promises)
     const m = await readMemory(sid)
     expect(m.notes.length).toBe(50)
+  })
+
+  test("enamHookParalelMenyimpanSemuaActivity", async () => {
+    const sid = "ses_conc_hook"
+    // 6 pemanggilan hook execute.after konkuren, 6 target berbeda
+    await Promise.all(
+      Array.from({ length: 6 }, (_, i) =>
+        activityHook(sid, [{ kind: "command", target: `cmd-${i}`, command: "x" }]),
+      ),
+    )
+    const m = await readMemory(sid)
+    expect(m.pendingActivity.length).toBe(6)
   })
 })

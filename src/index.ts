@@ -293,16 +293,16 @@ export default define({
             logEvent("capture", { sid: sessionID, tier, turns: 0 })
             return
           }
-          const memory = await loadMemory(sessionID)
-          logDrift(sessionID, fileBuildOf(memory))
-          addPendingTurn(memory, {
-            turnId: `${event.sessionID}:${event.messageID}`,
-            messageID: event.messageID,
-            userExcerpt: redact(extractUserExcerpt(text)),
-            createdAt: new Date().toISOString(),
-            tier,
+          const { memory } = await updateMemory(sessionID, (m) => {
+            logDrift(sessionID, fileBuildOf(m))
+            addPendingTurn(m, {
+              turnId: `${event.sessionID}:${event.messageID}`,
+              messageID: event.messageID,
+              userExcerpt: redact(extractUserExcerpt(text)),
+              createdAt: new Date().toISOString(),
+              tier,
+            })
           })
-          await saveMemory(sessionID, memory)
           recordCapture(sessionID, tier)
           logEvent("capture", { sid: sessionID, tier, turns: 1 })
         } catch (err: any) {
@@ -318,21 +318,21 @@ export default define({
           const sessionID = sanitizeSessionID(event.sessionID)
           const entries = classifyToolCall(event.tool, event.input, event, lastPromptMessageID.get(sessionID))
           if (entries.length === 0) return
-          const memory = await loadMemory(sessionID)
-          logDrift(sessionID, fileBuildOf(memory))
-          for (const entry of entries) {
-            addActivity(memory, entry)
-            const stored = memory.pendingActivity.find(
-              (item) => item.kind === entry.kind && item.target === entry.target,
-            )
-            logEvent("activity", {
-              sid: sessionID,
-              kind: entry.kind,
-              target: entry.target,
-              count: stored?.count ?? 1,
-            })
-          }
-          await saveMemory(sessionID, memory)
+          await updateMemory(sessionID, (m) => {
+            logDrift(sessionID, fileBuildOf(m))
+            for (const entry of entries) {
+              addActivity(m, entry)
+              const stored = m.pendingActivity.find(
+                (item) => item.kind === entry.kind && item.target === entry.target,
+              )
+              logEvent("activity", {
+                sid: sessionID,
+                kind: entry.kind,
+                target: entry.target,
+                count: stored?.count ?? 1,
+              })
+            }
+          })
         } catch (err: any) {
           logEvent("hook-error", { hook: "activity", error: err instanceof Error ? err.message : String(err) })
         }
