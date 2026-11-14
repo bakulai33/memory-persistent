@@ -183,8 +183,10 @@ describe("classifyToolCall", () => {
   })
 
   test("fileTargetTidakDiRedact", () => {
-    const entries = classifyToolCall("edit", { path: "/proj/src/token.ts" }, {})
-    expect(entries.find((e) => e.kind === "file")!.target).toBe("/proj/src/token.ts")
+    // `redact()` mengubah "token = ..." menjadi "[REDACTED]" — justru input seperti
+    // inilah yang membuktikan redact() TIDAK dijalankan pada target file.
+    const entries = classifyToolCall("edit", { path: "token = tokens[cursor]!" }, {})
+    expect(entries.find((e) => e.kind === "file")!.target).toBe("token = tokens[cursor]!")
   })
 
   test("targetMultiBarisTidakMasukKeFacts", async () => {
