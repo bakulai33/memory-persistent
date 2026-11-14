@@ -86,12 +86,17 @@ export function allocate(sections: (Section | undefined)[], budget: number): num
 
 export function buildInjection(memory: MemoryFile, budget = 5000): string {
   let summaryCore = ""
-  if (memory.summaryFacts || memory.summaryNarrative) {
+  if (memory.summaryFacts || memory.summaryFactsInherited || memory.summaryNarrative) {
     const cap = Number.isFinite(budget) ? Math.max(0, Math.floor(budget)) : 0
     const factsBudget = Math.floor(cap * FACTS_BUDGET_SHARE)
     const narrativeBudget = Math.floor(cap * NARRATIVE_BUDGET_SHARE)
     const summaryBudget = Math.floor(cap * SUMMARY_BUDGET_SHARE)
-    const factsPart = truncateFacts((memory.summaryFacts ?? "").trim(), factsBudget)
+    const ownFacts = (memory.summaryFacts ?? "").trim()
+    const inheritedFacts = (memory.summaryFactsInherited ?? "").trim()
+    const factsText = inheritedFacts
+      ? `${ownFacts}\n\nInherited from parent session:\n${inheritedFacts}`
+      : ownFacts
+    const factsPart = truncateFacts(factsText, factsBudget)
     const narrativePart = fitNarrative(factsPart, (memory.summaryNarrative ?? "").trim(), narrativeBudget, summaryBudget)
     summaryCore = [factsPart, narrativePart].filter(Boolean).join("\n\n")
     if (defaultTokenCounter(summaryCore) > summaryBudget) summaryCore = truncateToTokenBudget(summaryCore, summaryBudget)

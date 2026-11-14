@@ -42,12 +42,14 @@ export interface MemoryFile {
   build: string
   summary: string
   summaryFacts: string
+  summaryFactsInherited: string
   summaryNarrative: string
   notes: MemoryNote[]
   pendingTurns: PendingTurn[]
   pendingActivity: ActivityEntry[]
   needsConsolidation: boolean
   consolidation: Consolidation
+  captureCounters: { always: number; likely: number; noiseSkipped: number }
   updatedAt: string
 }
 
@@ -139,12 +141,14 @@ export function emptyMemory(sessionID: string, parentSnapshotFrom: string | null
     build: BUILD,
     summary: "",
     summaryFacts: "",
+    summaryFactsInherited: "",
     summaryNarrative: "",
     notes: [],
     pendingTurns: [],
     pendingActivity: [],
     needsConsolidation: false,
     consolidation: emptyConsolidation(),
+    captureCounters: { always: 0, likely: 0, noiseSkipped: 0 },
     updatedAt: now,
   }
 }
@@ -203,25 +207,44 @@ export async function readMemory(sessionID: string): Promise<MemoryFile> {
   const path = memoryPath(id)
   try {
     const raw = await readFile(path, "utf8")
-    const parsed = JSON.parse(raw) as MemoryFile | MemoryFileV1 | MemoryFileV2
+    const parsed = JSON.parse(raw) as MemoryFile | MemoryFileV1 | MemoryFileV2 | MemoryFileV3
     if (parsed.sessionID !== id) throw new Error("bad schema")
     let memory: MemoryFile
     if (parsed.version === 1) {
       memory = migrateV1(parsed as MemoryFileV1)
     } else if (parsed.version === 2) {
       memory = migrateV2(parsed as MemoryFileV2)
+    } else if (parsed.version === 3) {
+      const v3 = parsed as unknown as MemoryFileV3
+      memory = {
+        ...v3,
+        version: SCHEMA_VERSION,
+        build: parsed.build ?? BUILD,
+        summary: parsed.summary ?? "",
+        summaryFacts: parsed.summaryFacts ?? "",
+        summaryFactsInherited: "",
+        summaryNarrative: parsed.summaryNarrative ?? "",
+        captureCounters: { always: 0, likely: 0, noiseSkipped: 0 },
+        notes: parsed.notes ?? [],
+        pendingTurns: (parsed.pendingTurns ?? []).map(withTier),
+        pendingActivity: (parsed.pendingActivity ?? []).map(normalizeActivityEntry),
+        needsConsolidation: parsed.needsConsolidation === true,
+        consolidation: normalizeConsolidation(parsed.consolidation),
+      }
     } else if (parsed.version === SCHEMA_VERSION) {
       memory = {
         ...parsed,
         build: parsed.build ?? BUILD,
         summary: parsed.summary ?? "",
         summaryFacts: parsed.summaryFacts ?? "",
+        summaryFactsInherited: parsed.summaryFactsInherited ?? "",
         summaryNarrative: parsed.summaryNarrative ?? "",
         notes: parsed.notes ?? [],
         pendingTurns: (parsed.pendingTurns ?? []).map(withTier),
         pendingActivity: (parsed.pendingActivity ?? []).map(normalizeActivityEntry),
         needsConsolidation: parsed.needsConsolidation === true,
         consolidation: normalizeConsolidation(parsed.consolidation),
+        captureCounters: parsed.captureCounters ?? { always: 0, likely: 0, noiseSkipped: 0 },
       }
     } else {
       throw new Error("bad schema")
@@ -284,7 +307,24 @@ export async function updateMemory<T>(
 
 export async function copyMemory(fromSessionID: string, toSessionID: string): Promise<void> {
   const from = await readMemory(fromSessionID)
-  const copy = { ...from, sessionID: toSessionID, parentSnapshotFrom: fromSessionID, updatedAt: new Date().toISOString() }
+  const copy: MemoryFile = {
+    ...from,
+    sessionID: toSessionID,
+    parentSnapshotFrom: fromSessionID,
+    // Facts parent menjadi WARISAN anak, bukan claim pekerjaan anak.
+    summaryFacts: "",
+    // Rantai warisan ikut: cucu tetap tahu kakek punya facts (tanpa ini,
+    // facts kakek hilang diam-diam di generasi kedua).
+    summaryFactsInherited: [from.summaryFacts ?? "", from.summaryFactsInherited ?? ""]
+      .filter(Boolean)
+      .join("\n"),
+    // Ringkasan & narasi parent BUKAN milik anak.
+    summary: "",
+    summaryNarrative: "",
+    // Counter capture milik sesi anak, bukan milik parent.
+    captureCounters: { always: 0, likely: 0, noiseSkipped: 0 },
+    updatedAt: new Date().toISOString(),
+  }
   await writeMemory(toSessionID, copy)
 }
 
@@ -452,6 +492,22 @@ export function addActivity(memory: MemoryFile, entry: Omit<ActivityEntry, "id" 
   return true
 }
 
+export interface MemoryFileV3 {
+  version: 3
+  sessionID: string
+  parentSnapshotFrom: string | null
+  build: string
+  summary: string
+  summaryFacts: string
+  summaryNarrative: string
+  notes: MemoryNote[]
+  pendingTurns: PendingTurn[]
+  pendingActivity: ActivityEntry[]
+  needsConsolidation: boolean
+  consolidation: Consolidation
+  updatedAt: string
+}
+
 export interface MemoryFileV2 {
   version: 2
   sessionID: string
@@ -508,12 +564,14 @@ export function migrateV2(v2: MemoryFileV2): MemoryFile {
     build: "0.3.0",
     summary,
     summaryFacts: summary,
+    summaryFactsInherited: "",
     summaryNarrative: "",
     notes: v2.notes ?? [],
     pendingTurns: (v2.pendingTurns ?? []).map(withTier),
     pendingActivity: (v2.pendingActivity ?? []).map(normalizeActivityEntry),
     needsConsolidation: v2.needsConsolidation === true,
     consolidation,
+    captureCounters: { always: 0, likely: 0, noiseSkipped: 0 },
     updatedAt: v2.updatedAt ?? new Date().toISOString(),
   }
 }

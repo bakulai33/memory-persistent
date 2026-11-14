@@ -19,7 +19,7 @@ import { addPendingTurn } from "../src/memory"
 import { writeMemory, readMemory } from "../src/storage"
 import plugin from "../src/index"
 
-const RUNNING = { build: "0.4.0", sourceHash: "hash-abc" }
+const RUNNING = { build: "0.5.0", sourceHash: "hash-abc" }
 
 /** A memory file with a recorded failure that is still inside its backoff. */
 function failedMemory(sessionID = "ses_fail"): MemoryFile {
@@ -47,7 +47,7 @@ describe("health report", () => {
     const report = buildHealthReport(memory, RUNNING)
     expect(report.drift).toBe(true)
     expect(report.fileBuild).toBe("0.3.0")
-    expect(report.build).toBe("0.4.0")
+    expect(report.build).toBe("0.5.0")
   })
 
   test("drift is false when the file build matches the running build", () => {
@@ -437,7 +437,7 @@ describe("the memory_health tool", () => {
       "logPath",
     ])
     expect(report.pending).toEqual({ turns: 1, activity: 0, notes: 0 })
-    expect(report.build).toBe("0.4.0")
+    expect(report.build).toBe("0.5.0")
     expect(report.sourceTreeOk).toBe(true)
     expect(report.sourceHash.length).toBeGreaterThan(0)
     expect(report.capture).toEqual({ always: 0, likely: 0, noiseSkipped: 0 })

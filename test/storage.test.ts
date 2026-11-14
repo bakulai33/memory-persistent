@@ -130,6 +130,19 @@ describe("storage", () => {
     expect(child.notes[0].text).toBe("parent note")
   })
 
+  test("salinMemoriMenyisahkanFactsWarisan", async () => {
+    const parent = emptyMemory("ses_parent")
+    parent.summaryFacts = "- command: bun test (17x)"
+    await writeMemory("ses_parent", parent)
+
+    await copyMemory("ses_parent", "ses_child")
+    const child = await readMemory("ses_child")
+
+    expect(child.summaryFactsInherited).toContain("bun test")
+    expect(child.summaryFacts).toBe("")
+    expect(child.parentSnapshotFrom).toBe("ses_parent")
+  })
+
   test("addActivity folds repeats and reports new entries", () => {
     const memory = emptyMemory("ses_a")
     expect(addActivity(memory, { kind: "command", target: "bun" })).toBe(true)
@@ -154,10 +167,10 @@ describe("storage", () => {
     expect(memory.pendingActivity[0]?.target).toBe("/f10.ts")
   })
 
-  test("a new memory file carries the v3 shape", () => {
+  test("a new memory file carries the v4 shape", () => {
     const memory = emptyMemory("ses_new")
-    expect(memory.version).toBe(3)
-    expect(memory.build).toBe("0.4.0")
+    expect(memory.version).toBe(4)
+    expect(memory.build).toBe("0.5.0")
     expect(memory.summaryFacts).toBe("")
     expect(memory.summaryNarrative).toBe("")
     expect(memory.pendingActivity).toEqual([])
@@ -167,7 +180,7 @@ describe("storage", () => {
   test("readMemory recovers a stale running attempt in memory only", async () => {
     const staleStarted = new Date(Date.now() - 6 * 60_000).toISOString()
     const stale = {
-      version: 3,
+      version: 4,
       sessionID: "ses_stale",
       parentSnapshotFrom: null,
       build: "0.4.0",
@@ -210,7 +223,7 @@ describe("storage", () => {
 
   test("partial consolidation normalizes to a full object", async () => {
     const partial = {
-      version: 3,
+      version: 4,
       sessionID: "ses_partial",
       parentSnapshotFrom: null,
       build: "0.4.0",
@@ -238,7 +251,7 @@ describe("storage", () => {
   test("non-boolean needsConsolidation is normalized to false", async () => {
     for (const value of [1, "true"]) {
       const file = {
-        version: 3,
+        version: 4,
         sessionID: `ses_nc_${String(value)}`,
         parentSnapshotFrom: null,
         build: "0.4.0",
@@ -261,7 +274,7 @@ describe("storage", () => {
   test("running attempt without startedAt is recovered", async () => {
     const lastAttemptAt = new Date(Date.now() - 6 * 60_000).toISOString()
     const file = {
-      version: 3,
+      version: 4,
       sessionID: "ses_nostart",
       parentSnapshotFrom: null,
       build: "0.4.0",
@@ -328,7 +341,7 @@ describe("activity command inference", () => {
     const { writeFile, mkdir } = await import("node:fs/promises")
     const path = join(dir, "opencode", "memory-persistent", "sessions", "ses_norm.json")
     const raw = {
-      version: 3,
+      version: 4,
       sessionID: "ses_norm",
       parentSnapshotFrom: null,
       build: "0.4.0",
@@ -353,7 +366,7 @@ describe("activity command inference", () => {
     const { writeFile } = await import("node:fs/promises")
     const path = join(dir, "opencode", "memory-persistent", "sessions", "ses_normq.json")
     const raw = {
-      version: 3,
+      version: 4,
       sessionID: "ses_normq",
       parentSnapshotFrom: null,
       build: "0.4.0",

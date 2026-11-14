@@ -93,7 +93,7 @@ describe("migrateV1", () => {
     expect(migrated.summary).toBe("kept summary")
     expect(migrated.notes.length).toBe(1)
     expect(migrated.needsConsolidation).toBe(true)
-    expect(migrated.version).toBe(3)
+    expect(migrated.version).toBe(4)
   })
 
   test("gives the migrated file the consolidation state", () => {
@@ -138,13 +138,37 @@ describe("readMemory migration", () => {
       updatedAt: "2026-01-01T00:00:00.000Z",
     }
     const migrated = migrateV2(v2)
-    expect(migrated.version).toBe(3)
+    expect(migrated.version).toBe(4)
     expect(migrated.summaryFacts).toBe("old summary")
     expect(migrated.build).toBe("0.3.0")
     expect(migrated.consolidation.lastAttemptAt).toBe("2026-01-01T00:00:00.000Z")
     expect(migrated.consolidation.error).toBe("boom")
     expect(migrated.consolidation.consecutiveFailures).toBe(2)
     expect(migrated.consolidation.state).toBe("failed")
+  })
+
+  test("migrasiV3KeV4MemisahkanFacts", async () => {
+    mkdirSync(memoryDir(), { recursive: true })
+    const v3 = {
+      version: 3,
+      sessionID: "ses_v3m",
+      parentSnapshotFrom: null,
+      build: "0.4.0",
+      summary: "old summary",
+      summaryFacts: "- command: bun test (17x)",
+      summaryNarrative: "narr",
+      notes: [],
+      pendingTurns: [],
+      pendingActivity: [],
+      needsConsolidation: false,
+      consolidation: { state: "idle", attemptId: null, startedAt: null, finishedAt: null, error: null, consecutiveFailures: 0, deferrals: 0, deferredSince: null, lastAttemptAt: null, consolidatedNotes: 0 },
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }
+    writeFileSync(join(memoryDir(), "ses_v3m.json"), JSON.stringify(v3))
+    const v4 = await readMemory("ses_v3m")
+    expect(v4.summaryFacts).toBe(v3.summaryFacts)
+    expect(v4.summaryFactsInherited).toBe("")
+    expect(v4.captureCounters).toEqual({ always: 0, likely: 0, noiseSkipped: 0 })
   })
 
   test("reads a v1 file and returns it as v3", async () => {
@@ -161,7 +185,7 @@ describe("readMemory migration", () => {
       ),
     )
     const memory = await readMemory("ses_old")
-    expect(memory.version).toBe(3)
+    expect(memory.version).toBe(4)
     expect(memory.pendingTurns.length).toBe(1)
     expect(memory.pendingTurns[0]?.userExcerpt).toBe("a real question")
   })

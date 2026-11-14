@@ -18,7 +18,8 @@ import {
   finishSuccess,
   finishFailure,
 } from "../src/consolidation"
-import { emptyMemory, addActivity, type PendingTurn } from "../src/storage"
+import { emptyMemory, addActivity, type PendingTurn, writeMemory, readMemory } from "../src/storage"
+import { copyMemory } from "../src/storage"
 import { defaultTokenCounter } from "../src/tokenizer"
 
 const turn = (id: string, excerpt: string): PendingTurn => ({
@@ -71,6 +72,18 @@ describe("memory", () => {
     expect(addActivity(m, { kind: "command", target: "bun" })).toBe(false)
     expect(m.pendingActivity.length).toBe(1)
     expect(m.pendingActivity[0]?.count).toBe(2)
+  })
+
+  test("injeksiMelabeliFactsWarisan", async () => {
+    const parent = emptyMemory("ses_parent")
+    parent.summaryFacts = "- command: bun test (17x)"
+    await writeMemory("ses_parent", parent)
+    await copyMemory("ses_parent", "ses_child")
+
+    const child = await readMemory("ses_child")
+    const out = buildInjection(child, 5000)
+    expect(out).toContain("Inherited from parent session:")
+    expect(out).toContain("bun test")
   })
 
   test("buildInjection includes summary, conversation, notes and activity", () => {
