@@ -19,6 +19,10 @@ Use this skill when you need to remember or recall context for the current sessi
 - Use `memory_health` to check whether consolidation is working.
 - A summary may be **partial** when background work was still running when it was written;
   treat it as incomplete and re-check after the session goes idle.
+- **Inherited facts are the PARENT session's work, not yours.** (Facts from parent are warisan;
+  child session clears its own `summaryFacts` and only carries `summaryFactsInherited`.)
+- **Model narrative is UNVERIFIED — never cite it as a source of fact.** (The "unverified" label
+  in the injection exists precisely for this reason.)
 
 ## When to store
 

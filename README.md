@@ -75,7 +75,51 @@ disimpan karena hanya mengaburkan percakapan.
 | `memory_recall` | Panggil memori sesi ini (opsional `query`) |
 | `memory_list` | Daftar catatan sesi ini |
 | `memory_forget` | Hapus catatan berdasarkan `id` |
-| `memory_health` | Status konsolidasi sesi ini (build, drift, state, error, retry, capture counters) |
+| `memory_health` | Status konsolidasi sesi ini |
+| `tools/measure.ts` | Baca-only efektivitas tool (Task 11 menambahkannya); menyediakan laporan build, drift, dan schema versi tanpa memodifikasi memori |
+
+## Schema
+
+- **Versi skema:** `4` (schema v4 dengan pemisahan facts warisan)
+- **Build catatan:** `build.json` mencatat `build: "0.5.0"` dan hash source; drift dilaporkan levia `memory_health`
+- **Label "unverified":** Narasi model ditandai sebagai "Notes (model-generated, unverified):" — tidak pernah dijadikan sumber fakta
+
+## Facts vs Inherited Facts
+
+- `summaryFacts` : fakta deterministik milisession ini (file, command, error yang plugin catat sendiri)
+- `summaryFactsInherited` : fakta warisan dari sesi parent (diisi saat child/fork dibuat; format `"Inherited from parent session:\n<facts>"`)
+- Saat injeksi memori, faktanya ditempatkan sebelum narasi model; faktas tetap disimpan meskipun narasi gagal
+
+## Capture Marker Split (EN / ID / Prefix)
+
+Policy menangkap pakai tiga kelas marker (urutan prioritas):
+
+1. **EN word** (`\\bword\\b`) — kata Inggris utuh, menghindari FP seperti "shoulders" dari "should"
+2. **Prefix** (tanpa batas kanan `\b`) — contoh: "analyz", "lanjut", "praq", "raq"
+3. **ID substring** — imbuhan Indonesia (di-, me-, ke-, -nya); cocok sebagai substring dalam kata ("disetujui", "perbaiki", dll.)
+
+Lainnya: panjang > 120 token → always; greetings → noise; pendek < 15 token → noise.
+
+## Input Validation: `validateStoreInput`
+
+- Menolak teks kosong setelah trim
+- Menolak jika `tags` bukan array
+- Menolak jika > 16 tag
+- Setiap tag harus string, maks 64 karakter, tanpa kontrol karakter (0x1F)
+- Error dikembalikan sebagai `null` bila valid, atau pesan rejection string
+
+## Skill Path Derivation (not hard-coded)
+
+- Path dinamis: `resolveSkillPath()` menggunakan `import.meta.url` dan `dirname()` untuk menemukan `skills/memory-persistent/SKILL.md`
+- Tidak di-hardcode sebagai `/home/<user>/...` ⇒ plugin bisa dipasang di mana saja
+
+### Anti-leak
+
+- `sessionID` selalu divalidasi (`[A-Za-z0-9_-]+`), path traversal ditolak.
+- Tool hanya bekerja pada sesi dari konteks eksekusi — `sessionID` tidak pernah diterima dari argumen.
+- Tidak ada tool untuk melihat sesi lain.
+- Child/fork hanya mewarisi snapshot saat pembuatan, lalu divergen; tidak ada sinkronisasi balik.
+- Isi memori hanya ringkasan dan catatan; output mentah tool tidak disimpan.
 
 ## Skill
 
