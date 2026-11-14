@@ -1,5 +1,5 @@
 import { describe, test, expect, afterEach } from "bun:test"
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { checkSourceTree, sourceHash } from "../src/selfcheck"
@@ -87,6 +87,13 @@ describe("sourceHash", () => {
 
 test("pathSkillDiturunkanDariLokasiPlugin", () => {
   const skillPath = resolveSkillPath()
-  expect(skillPath).not.toContain("/home/<user>")
+  // (a) file yang ditunjuk benar-benar ada
   expect(existsSync(skillPath)).toBe(true)
+  // (b) path menunjuk SKILL.md yang benar
+  expect(skillPath.endsWith(join("skills", "memory-persistent", "SKILL.md"))).toBe(true)
+  // (c) DISKRIMINATIF: source tidak boleh memuat path mesin yang di-hard-code.
+  //     Dengan implementasi hard-coded lama (`"/home/<user>/.../SKILL.md"`), assertion
+  //     ini GAGAL — itulah daya pembedanya.
+  const src = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf8")
+  expect(src).not.toContain("/home/<user>/Documents")
 })
