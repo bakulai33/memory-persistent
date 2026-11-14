@@ -275,12 +275,66 @@ export async function runConsolidation(deps: ConsolidationDeps): Promise<"skippe
   return "applied"
 }
 
-/** Merges fact lines across cycles, dropping exact duplicates and keeping order. */
-function mergeFacts(oldFacts: string, newFacts: string): string {
-  const lines = [...oldFacts.split("\n"), ...newFacts.split("\n")]
-    .map((line) => line.trim())
-    .filter(Boolean)
-  return [...new Set(lines)].join("\n")
+/** Buang suffix counter agar varian menyatu. */
+function stripCounter(target: string): string {
+  return target.replace(/ \(\d+x\)$/, "")
+}
+
+/** Target activity harus satu baris & tidak memuat blok argumen bocor. */
+function isSaneTarget(kind: string, target: string): boolean {
+  if (!target.trim()) return false
+  if (target.includes("\n")) return false
+  if (kind === "file" && target.length > 400) return false
+  return true
+}
+
+function parseFactLine(line: string): { kind: string; target: string; count: number } | null {
+  const m = line.match(/^- (file|command|error): (.+?)(?: \((\d+)x\))?$/)
+  if (!m) return null
+  return { kind: m[1]!, target: m[2]!, count: m[3] ? Number(m[3]) : 1 }
+}
+
+function groupFacts(lines: string[], firstSeen: Map<string, number>): Map<string, Map<string, number>> {
+  const groups = new Map<string, Map<string, number>>()
+  for (const kind of ["file", "command", "error"]) groups.set(kind, new Map())
+  let order = 0
+  for (const raw of lines) {
+    const parsed = parseFactLine(raw.trim())
+    if (!parsed) continue
+    const target = stripCounter(parsed.target)
+    if (!isSaneTarget(parsed.kind, target)) continue
+    if (parsed.kind === "command" && !target.includes(" ")) continue
+    const bucket = groups.get(parsed.kind)!
+    const key = `${parsed.kind}\u0000${target}`
+    if (!firstSeen.has(key)) firstSeen.set(key, order++)
+    bucket.set(target, (bucket.get(target) ?? 0) + parsed.count)
+  }
+  return groups
+}
+
+function renderGroups(
+  groups: Map<string, Map<string, number>>,
+  firstSeenOf: (key: string) => number,
+): string {
+  const out: string[] = []
+  for (const kind of ["file", "command", "error"]) {
+    const entries = [...groups.get(kind)!.entries()].sort(
+      (a, b) => (b[1] - a[1]) || firstSeenOf(`${kind}\u0000${a[0]}`) - firstSeenOf(`${kind}\u0000${b[0]}`),
+    )
+    for (const [target, count] of entries) {
+      out.push(`- ${kind}: ${target}${count > 1 ? ` (${count}x)` : ""}`)
+    }
+  }
+  return out.join("\n")
+}
+
+/**
+ * Merges fact lines across cycles, curating and deduplicating by kind+target.
+ */
+export function mergeFacts(oldFacts: string, newFacts: string): string {
+  const firstSeen = new Map<string, number>()
+  const groups = groupFacts([...oldFacts.split("\n"), ...newFacts.split("\n")], firstSeen)
+  return renderGroups(groups, (key) => firstSeen.get(key) ?? 0)
 }
 
 /**
@@ -289,11 +343,9 @@ function mergeFacts(oldFacts: string, newFacts: string): string {
  * the narrative being produced.
  */
 export function buildFacts(delta: Delta): string {
-  const lines = delta.facts
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-  return [...new Set(lines)].join("\n")
+  const firstSeen = new Map<string, number>()
+  const groups = groupFacts(delta.facts.split("\n"), firstSeen)
+  return renderGroups(groups, (key) => firstSeen.get(key) ?? 0)
 }
 
 /**
@@ -322,8 +374,10 @@ function fitNarrative(facts: string, narrative: string, narrativeBudget: number,
 }
 
 /**
- * Facts accumulate oldest-first, so a cap keeps the newest lines: the latest
- * files, commands and errors are the ones the next turn needs.
+ * Curated facts are rendered count-desc then first-seen-asc, so equal-count
+ * entries keep their original insertion order (oldest first). A cap therefore
+ * keeps the newest lines at the tail: the latest files, commands and errors
+ * are the ones the next turn needs.
  */
 function truncateFacts(facts: string, budget: number): string {
   if (defaultTokenCounter(facts) <= budget) return facts
