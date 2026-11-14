@@ -63,18 +63,25 @@ type Section = { text: string; capPct: number }
  * summary never starves the conversation.
  */
 export function allocate(sections: (Section | undefined)[], budget: number): number[] {
+  /** Token yang dianggarkan untuk tiap separator "\n\n" antar bagian. */
+  const SEPARATOR_TOKENS = 1
+
+  const parts = sections.filter(Boolean).length
+  const separatorCost = SEPARATOR_TOKENS * Math.max(0, parts - 1)
+  const usable = Math.max(0, budget - separatorCost)
+
   const sizes = sections.map((section) => (section ? defaultTokenCounter(section.text) : 0))
   const allowance = sections.map((section, index) =>
-    section ? Math.min(sizes[index]!, Math.floor(budget * section.capPct)) : 0,
+    section ? Math.min(sizes[index]!, Math.floor(usable * section.capPct)) : 0,
   )
   const total = allowance.reduce((a, b) => a + b, 0)
-  if (total > budget) {
-    const scale = budget / total
+  if (total > usable) {
+    const scale = usable / total
     for (let index = 0; index < allowance.length; index++) allowance[index] = Math.floor(allowance[index]! * scale)
     return allowance
   }
-  let leftover = budget - total
-  for (let index = 0; index < allowance.length && leftover > 0; index++) {
+  let leftover = usable - total
+  for (let index = 0; index < sections.length && leftover > 0; index++) {
     const room = sizes[index]! - allowance[index]!
     if (room <= 0) continue
     const give = Math.min(room, leftover)
