@@ -76,7 +76,7 @@ disimpan karena hanya mengaburkan percakapan.
 | `memory_list` | Daftar catatan sesi ini |
 | `memory_forget` | Hapus catatan berdasarkan `id` |
 | `memory_health` | Status konsolidasi sesi ini |
-| `tools/measure.ts` | Baca-only efektivitas tool (Task 11 menambahkannya); menyediakan laporan build, drift, dan schema versi tanpa memodifikasi memori |
+| `tools/measure.ts` | Baca-only efektivitas tool; menyediakan laporan build, drift, dan schema versi tanpa memodifikasi memori |
 
 ## Schema
 
