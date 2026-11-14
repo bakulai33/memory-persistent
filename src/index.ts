@@ -26,6 +26,7 @@ import {
   defaultConsolidationMode,
   estimatePromptTokens,
   retryOnce,
+  validateStoreInput,
 } from "./memory.js"
 import {
   canConsolidate,
@@ -58,7 +59,7 @@ import { classifyToolCall } from "./metadata.js"
 import { checkSourceTree, sourceHash } from "./selfcheck.js"
 import { BUILD, SCHEMA_VERSION } from "./build.js"
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { dirname } from "node:path"
+import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const StringArray = Schema.Array(Schema.String)
@@ -100,6 +101,12 @@ function trackPrompt(sessionID: string, messageID: string): void {
 
 function textResult(text: string) {
   return { content: [{ type: "text" as const, text }] }
+}
+
+// Resolve skill path relative to this module (not hard-coded /home/<user>/...)
+export function resolveSkillPath(): string {
+  const dir = dirname(fileURLToPath(import.meta.url))
+  return join(dir, "..", "skills", "memory-persistent", "SKILL.md")
 }
 
 export default define({
@@ -180,6 +187,8 @@ export default define({
         execute: (input: any, context: any) =>
           Effect.promise(async () => {
             const sessionID = sanitizeSessionID(context.sessionID)
+            const validation = validateStoreInput(input.text, input.tags)
+            if (validation) return textResult(validation)
             const { value: note } = await updateMemory(sessionID, (m) =>
               appendNote(m, input.text, input.tags ?? [], "manual"),
             )
@@ -251,7 +260,7 @@ export default define({
 
     // Register skill
     try {
-      const skillPath = "/home/<user>/Documents/project/memory-persistent/skills/memory-persistent/SKILL.md"
+      const skillPath = resolveSkillPath()
       const skillContent = readFileSync(skillPath, "utf8")
       yield* ctx.skill.transform((editor: any) => {
         editor.add({
@@ -262,7 +271,9 @@ export default define({
           content: skillContent,
         })
       })
-    } catch {}
+    } catch (err: any) {
+      logEvent("skill-registration", { error: err instanceof Error ? err.message : String(err) })
+    }
 
     // Hook: prompt (turn tagging)
     yield* ctx.session.hook("prompt", (event: any) =>

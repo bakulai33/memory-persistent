@@ -3,6 +3,8 @@ import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { checkSourceTree, sourceHash } from "../src/selfcheck"
+import { resolveSkillPath } from "../src/index"
+import { existsSync } from "node:fs"
 
 const FIXTURES = join(import.meta.dir, "fixtures", "source-tree")
 const SRC = join(import.meta.dir, "..", "src")
@@ -81,4 +83,10 @@ describe("sourceHash", () => {
     ])
     expect(sourceHash(first)).toBe(sourceHash(second))
   })
+})
+
+test("pathSkillDiturunkanDariLokasiPlugin", () => {
+  const skillPath = resolveSkillPath()
+  expect(skillPath).not.toContain("/home/<user>")
+  expect(existsSync(skillPath)).toBe(true)
 })

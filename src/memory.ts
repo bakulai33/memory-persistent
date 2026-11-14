@@ -472,6 +472,19 @@ export function mergeSummary(facts: string, narrative: string, budget: number): 
   return splitSummary(facts, narrative, budget).summary
 }
 
+export function validateStoreInput(text: unknown, tags: unknown): string | null {
+  const trimmed = typeof text === "string" ? text.trim() : ""
+  if (!trimmed) return "Rejected: text is empty"
+  if (!Array.isArray(tags)) return null
+  if (tags.length > 16) return "Rejected: too many tags (max 16)"
+  for (const tag of tags) {
+    if (typeof tag !== "string") return "Rejected: invalid tag"
+    if (tag.length > 64) return "Rejected: invalid tag"
+    if (/[\x00-\x1f]/.test(tag)) return "Rejected: invalid tag"
+  }
+  return null
+}
+
 export function applyDelta(m: MemoryFile, delta: Delta, narrative: string, budget = 5000): void {
   if (m.consolidation.attemptId !== delta.attemptId) return
   const turnSet = new Set(delta.turnIds)

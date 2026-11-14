@@ -74,6 +74,28 @@ describe("capture policy", () => {
       expect(`${item.id}:${capturePolicy(item.text)}`).toBe(`${item.id}:${item.tier}`)
     }
   })
+
+  test("penandaInggrisMenggunakanBatasKata", () => {
+    expect(capturePolicy("the shoulders of the coat")).not.toBe("always")
+    expect(capturePolicy("show me the preview screen")).not.toBe("always")
+  })
+
+  test("morfologiIndonesiaTetapAlways", () => {
+    // imbuhan ID (di-, me-, ke-, -nya) TIDAK boleh membuat penanda mati
+    for (const text of [
+      "tolong diperbaiki sekarang", "melakukan overhaul", "sudah dilakukan",
+      "kesepakatan sudah reached", "menganalisis sistem", "risetnya sudah",
+      "tinjauan kode", "disetujui", "sudah saya lanjutkan",
+    ]) {
+      expect(capturePolicy(text)).toBe("always")
+    }
+  })
+
+  test("penandaAwalanTetapCocok", () => {
+    expect(capturePolicy("analisis mendalam")).toBe("always")   // "analisis"
+    expect(capturePolicy("lanjutkan sekarang")).toBe("always")  // "lanjut"
+    expect(capturePolicy("raq ini")).toBe("always")               // "raq"
+  })
 })
 
 describe("capture policy on the labeled set", () => {

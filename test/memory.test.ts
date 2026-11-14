@@ -10,6 +10,7 @@ import {
   buildRecallPayload,
   buildConsolidationInput,
   allocate,
+  validateStoreInput,
 } from "../src/memory"
 import {
   canConsolidate,
@@ -227,5 +228,18 @@ describe("memory", () => {
     const payload = buildRecallPayload(m, 5000)
     expect(payload.summaryNarrativeVerified).toBe(false)
     expect(payload.injection).toContain("unverified")
+  })
+
+  test("storeMenolakTeksKosong", () => {
+    expect(validateStoreInput("", [])).toBe("Rejected: text is empty")
+    expect(validateStoreInput("   ", [])).toBe("Rejected: text is empty")
+    expect(validateStoreInput(undefined, [])).toBe("Rejected: text is empty")
+    expect(validateStoreInput("catatan yang valid", [])).toBeNull()
+  })
+
+  test("storeMenolakTagBerlebihan", () => {
+    expect(validateStoreInput("ok", Array.from({ length: 17 }, () => "t"))).toBe("Rejected: too many tags (max 16)")
+    expect(validateStoreInput("ok", ["x".repeat(65)])).toBe("Rejected: invalid tag")
+    expect(validateStoreInput("ok", ["bad\u0000tag"])).toBe("Rejected: invalid tag")
   })
 })
