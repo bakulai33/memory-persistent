@@ -22,7 +22,6 @@ import {
   applyDelta,
   runConsolidation,
   loadMemory,
-  saveMemory,
   defaultConsolidationMode,
   estimatePromptTokens,
   retryOnce,
@@ -293,7 +292,7 @@ export default define({
             logEvent("capture", { sid: sessionID, tier, turns: 0 })
             return
           }
-          const { memory } = await updateMemory(sessionID, (m) => {
+          await updateMemory(sessionID, (m) => {
             logDrift(sessionID, fileBuildOf(m))
             addPendingTurn(m, {
               turnId: `${event.sessionID}:${event.messageID}`,
