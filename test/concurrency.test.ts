@@ -3,6 +3,12 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { readMemory, updateMemory, addActivity, type PendingTurn } from "../src/storage"
+import { appendNote } from "../src/memory"
+
+async function storeNote(sid: string, text: string) {
+  const { value } = await updateMemory(sid, (m) => appendNote(m, text, [], "manual"))
+  return value.id
+}
 
 describe("concurrency", () => {
   let dir: string
@@ -53,5 +59,15 @@ describe("concurrency", () => {
     expect(m.summary).toBe("summarized")
     // capActivity caps at 40 distinct entries
     expect(m.pendingActivity.length).toBe(40)
+  })
+
+  test("lima puluh StoreParalelMenyimpanSemuaNote", async () => {
+    const sid = "ses_conc_store"
+    const promises = Array.from({ length: 50 }, (_, i) =>
+      storeNote(sid, `note-${i}`),
+    )
+    await Promise.all(promises)
+    const m = await readMemory(sid)
+    expect(m.notes.length).toBe(50)
   })
 })

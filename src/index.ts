@@ -181,9 +181,9 @@ export default define({
         execute: (input: any, context: any) =>
           Effect.promise(async () => {
             const sessionID = sanitizeSessionID(context.sessionID)
-            const memory = await loadMemory(sessionID)
-            const note = appendNote(memory, input.text, input.tags ?? [], "manual")
-            await saveMemory(sessionID, memory)
+            const { value: note } = await updateMemory(sessionID, (m) =>
+              appendNote(m, input.text, input.tags ?? [], "manual"),
+            )
             return textResult(`Stored note ${note.id}`)
           }),
       })
@@ -233,9 +233,7 @@ export default define({
         execute: (input: any, context: any) =>
           Effect.promise(async () => {
             const sessionID = sanitizeSessionID(context.sessionID)
-            const memory = await loadMemory(sessionID)
-            const ok = removeNote(memory, input.id)
-            if (ok) await saveMemory(sessionID, memory)
+            const { value: ok } = await updateMemory(sessionID, (m) => removeNote(m, input.id))
             return textResult(ok ? `Forgot ${input.id}` : `Not found: ${input.id}`)
           }),
       })
