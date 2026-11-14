@@ -43,14 +43,13 @@ import { capturePolicy } from "./capture.js"
 import { redact } from "./redact.js"
 import {
   buildHealthReport,
-  captureCounters,
+  bumpCaptureCounter,
   fileBuildOf,
   healthRuntime,
   lastConsolidation,
   logDrift,
   logEvent,
   logPath,
-  recordCapture,
   recordConsolidation,
   resetHealthState,
   setHealthRuntime,
@@ -241,7 +240,6 @@ export default define({
               { build: runtime.build, sourceHash: runtime.sourceHash },
               {
                 sourceTreeOk: runtime.sourceTreeOk,
-                capture: captureCounters(sessionID),
                 lastConsolidation: lastConsolidation(sessionID),
                 logPath: logPath(),
               },
@@ -276,8 +274,10 @@ export default define({
           trackPrompt(sessionID, event.messageID)
           const tier = capturePolicy(text)
           if (tier === "noise") {
-            recordCapture(sessionID, tier)
-            logEvent("capture", { sid: sessionID, tier, turns: 0 })
+            await updateMemory(sessionID, (m) => {
+              bumpCaptureCounter(m.captureCounters, tier)
+              logEvent("capture", { sid: sessionID, tier, turns: 0 })
+            })
             return
           }
           await updateMemory(sessionID, (m) => {
@@ -289,8 +289,8 @@ export default define({
               createdAt: new Date().toISOString(),
               tier,
             })
+            bumpCaptureCounter(m.captureCounters, tier)
           })
-          recordCapture(sessionID, tier)
           logEvent("capture", { sid: sessionID, tier, turns: 1 })
         } catch (err: any) {
           logEvent("hook-error", { hook: "prompt", error: err instanceof Error ? err.message : String(err) })

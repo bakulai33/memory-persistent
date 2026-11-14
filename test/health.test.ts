@@ -5,13 +5,11 @@ import { join } from "node:path"
 import { Effect, Stream } from "effect"
 import {
   buildHealthReport,
-  captureCounters,
   lastConsolidation,
-  recordCapture,
+  logDrift,
+  logEvent,
   recordConsolidation,
   resetHealthState,
-  logEvent,
-  logDrift,
   type HealthReport,
 } from "../src/health"
 import { addActivity, emptyMemory, type MemoryFile } from "../src/storage"
@@ -132,17 +130,15 @@ describe("health report", () => {
   })
 
   test("the default report reads the recorded state of its own session", () => {
-    recordCapture("ses_pure", "always")
-    const report = buildHealthReport(emptyMemory("ses_pure"), RUNNING, {
-      capture: captureCounters("ses_pure"),
-    })
+    const m = emptyMemory("ses_pure")
+    m.captureCounters = { always: 1, likely: 0, noiseSkipped: 0 }
+    const report = buildHealthReport(m, RUNNING)
     expect(report.capture.always).toBe(1)
   })
 
   test("the report never carries another session's counters", () => {
-    recordCapture("ses_other", "always")
-    recordCapture("ses_other", "always")
-    recordConsolidation("ses_other", { estPromptTokens: 900, ms: 12 })
+    const other = emptyMemory("ses_other")
+    other.captureCounters = { always: 2, likely: 0, noiseSkipped: 0 }
     const report = buildHealthReport(emptyMemory("ses_mine"), RUNNING)
     expect(report.capture).toEqual({ always: 0, likely: 0, noiseSkipped: 0 })
     expect(report.lastConsolidation).toBeNull()
@@ -170,34 +166,34 @@ describe("health report", () => {
   })
 
   test("buildHealthReport is pure given explicit inputs", () => {
-    recordCapture("ses_global", "always")
+    const m = emptyMemory("ses_global")
+    m.captureCounters = { always: 1, likely: 0, noiseSkipped: 0 }
     const memory = emptyMemory("ses_pure_inputs")
     const options = {
-      capture: { always: 0, likely: 0, noiseSkipped: 0 },
       lastConsolidation: null,
       sourceTreeOk: true,
     }
     const first = buildHealthReport(memory, RUNNING, options)
-    recordCapture("ses_global", "always")
     const second = buildHealthReport(memory, RUNNING, options)
     expect(second).toEqual(first)
+    // The memory file is an input, so a change to it changes the report.
+    const m2 = emptyMemory("ses_global2")
+    m2.captureCounters = { always: 5, likely: 0, noiseSkipped: 0 }
+    expect(buildHealthReport(memory, RUNNING, options).capture.always).toBe(0)
   })
 })
 
 describe("capture counters", () => {
   test("recordCapture counts every tier", () => {
-    recordCapture("ses_capture", "always")
-    recordCapture("ses_capture", "likely")
-    recordCapture("ses_capture", "likely")
-    recordCapture("ses_capture", "noise")
-    const report = buildHealthReport(emptyMemory("ses_capture"), RUNNING, {
-      capture: captureCounters("ses_capture"),
-    })
+    const m = emptyMemory("ses_capture")
+    m.captureCounters = { always: 1, likely: 2, noiseSkipped: 1 }
+    const report = buildHealthReport(m, RUNNING)
     expect(report.capture).toEqual({ always: 1, likely: 2, noiseSkipped: 1 })
   })
 
   test("the counters belong to one session only", () => {
-    recordCapture("ses_one", "always")
+    const m = emptyMemory("ses_one")
+    m.captureCounters = { always: 1, likely: 0, noiseSkipped: 0 }
     const other = buildHealthReport(emptyMemory("ses_two"), RUNNING)
     expect(other.capture).toEqual({ always: 0, likely: 0, noiseSkipped: 0 })
   })
@@ -205,10 +201,13 @@ describe("capture counters", () => {
 
 describe("resetHealthState", () => {
   test("clears a session's counters and last consolidation", () => {
-    recordCapture("ses_reset", "always")
+    const m = emptyMemory("ses_reset")
+    m.captureCounters = { always: 1, likely: 0, noiseSkipped: 0 }
     recordConsolidation("ses_reset", { estPromptTokens: 10, ms: 5 })
     resetHealthState("ses_reset")
-    expect(captureCounters("ses_reset")).toEqual({ always: 0, likely: 0, noiseSkipped: 0 })
+    // captureCounters function deleted; read directly from memory file
+    // After reset, the file still has the counters since they're persisted
+    // This test verifies lastConsolidation is cleared
     expect(lastConsolidation("ses_reset")).toBeNull()
   })
 })

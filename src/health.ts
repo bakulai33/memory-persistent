@@ -63,8 +63,7 @@ export interface HealthOptions {
   now?: number
   /** Whether the running source tree can link. Defaults to true. */
   sourceTreeOk?: boolean
-  /** The capture counters. Defaults to the ones recorded for the session. */
-  capture?: CaptureCounters
+  
   /** The last consolidation. Defaults to the one recorded for the session. */
   lastConsolidation?: LastConsolidation | null
   /** Where the plugin log lives. Defaults to the plugin's own log path. */
@@ -128,9 +127,8 @@ export function healthRuntime(): HealthRuntime {
   return { ...runtime }
 }
 
-/** Counts one captured or skipped prompt under the tier the policy gave it. */
-export function recordCapture(sessionID: string, tier: CaptureTier): void {
-  const counters = stateFor(sessionID).capture
+/** Menaikkan counter capture pada objek memory (tanpa I/O). */
+export function bumpCaptureCounter(counters: CaptureCounters, tier: CaptureTier): void {
   if (tier === "always") counters.always += 1
   else if (tier === "likely") counters.likely += 1
   else counters.noiseSkipped += 1
@@ -148,10 +146,9 @@ export function recordConsolidation(
   }
 }
 
-/** The capture counters of one session. */
-export function captureCounters(sessionID: string): CaptureCounters {
-  const state = sessions.get(sessionID)
-  return state ? { ...state.capture } : emptyCounters()
+/** The capture counters of one session, read from the memory file. */
+export function captureCountersOf(m: MemoryFile): CaptureCounters {
+  return { ...m.captureCounters }
 }
 
 /** The last consolidation of one session, or null when none ran. */
@@ -197,7 +194,6 @@ export function buildHealthReport(
 ): HealthReport {
   const now = options.now ?? Date.now()
   const fileBuild = fileBuildOf(m)
-  const capture = options.capture ?? { always: 0, likely: 0, noiseSkipped: 0 }
   const last = options.lastConsolidation === undefined ? null : options.lastConsolidation
   // A retry is pending only while the backoff has not elapsed yet.
   const delay = m.needsConsolidation ? retryDelayMs(m, now) : 0
@@ -220,7 +216,7 @@ export function buildHealthReport(
       notes: m.notes.length,
     },
     lastConsolidation: last ? { ...last } : null,
-    capture: { ...capture },
+    capture: captureCountersOf(m),
     logPath: options.logPath ?? logPath(),
   }
 }
