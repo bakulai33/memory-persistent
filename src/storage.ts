@@ -314,27 +314,85 @@ export async function updateMemory<T>(
   })
 }
 
-export async function copyMemory(fromSessionID: string, toSessionID: string): Promise<void> {
-  const from = await readMemory(fromSessionID)
-  const copy: MemoryFile = {
-    ...from,
+/**
+ * Reads a session's memory while holding that session's lock, so a reader
+ * never overtakes a concurrent `updateMemory` (I5): the in-flight update
+ * finishes and its write lands before this read returns.
+ */
+export function readMemoryLocked(sessionID: string): Promise<MemoryFile> {
+  return withLock(sessionID, () => readMemory(sessionID))
+}
+
+/** Suffix `(N)` that folds a repeated activity target, as the fact builders render it. */
+const FACT_COUNTER_RE = / \(\d+x\)$/
+
+/**
+ * Dedupes fact lines by kind+target, first occurrence wins, so the head of the
+ * chain stays the newest curated line. The `(Nx)` counter suffix takes no part
+ * in the key: `- command: bun test (3x)` and `- command: bun test (17x)` are
+ * the same fact and collapse onto the first shape. Blank lines are dropped;
+ * lines that are not fact lines are keyed and kept verbatim.
+ */
+export function dedupeFactLines(lines: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line) continue
+    const parsed = line.match(/^- (file|command|error): (.+)$/)
+    const key = parsed ? `${parsed[1]}\u0000${parsed[2]!.replace(FACT_COUNTER_RE, "")}` : line
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(line)
+  }
+  return out
+}
+
+/**
+ * Builds the labeled child snapshot of a parent memory. Pure: no file IO, no
+ * `collectDelta` (it mutates `attemptId`), and no mutation of `parent`.
+ *
+ * Facts: the parent's pending activity is curated to fact lines directly and
+ * heads the inherited chain, ahead of the parent's own facts and the facts the
+ * parent inherited — so the newest curated decision is always at the head.
+ *
+ * Final decision: the parent's turn excerpts are NOT inherited — the child
+ * starts with its own conversation; only facts, notes and lineage carry over.
+ */
+export function buildSnapshot(parent: MemoryFile, toSessionID: string): MemoryFile {
+  const curated = parent.pendingActivity.map(
+    (a) => `- ${a.kind}: ${a.target}${a.count > 1 ? ` (${a.count}x)` : ""}`,
+  )
+  const inherited = dedupeFactLines([
+    ...curated,
+    ...(parent.summaryFacts ?? "").split("\n"),
+    ...(parent.summaryFactsInherited ?? "").split("\n"),
+  ]).join("\n")
+  return {
+    version: SCHEMA_VERSION,
     sessionID: toSessionID,
-    parentSnapshotFrom: fromSessionID,
-    // Facts parent menjadi WARISAN anak, bukan claim pekerjaan anak.
-    summaryFacts: "",
-    // Rantai warisan ikut: cucu tetap tahu kakek punya facts (tanpa ini,
-    // facts kakek hilang diam-diam di generasi kedua).
-    summaryFactsInherited: [from.summaryFacts ?? "", from.summaryFactsInherited ?? ""]
-      .filter(Boolean)
-      .join("\n"),
+    // The snapshot is labeled with the session it came from (== the `from`
+    // argument of copyMemory; readMemory guarantees they match).
+    parentSnapshotFrom: parent.sessionID,
+    build: BUILD,
     // Ringkasan & narasi parent BUKAN milik anak.
     summary: "",
+    summaryFacts: "",
+    summaryFactsInherited: inherited,
     summaryNarrative: "",
+    // Note parent menjadi WARISAN anak, bukan claim pekerjaan anak.
+    notes: [],
+    notesInherited: [...(parent.notesInherited ?? []), ...parent.notes].slice(-20),
+    // Kutipan turn parent tidak diwarisi: anak mulai dengan percakapannya sendiri.
+    pendingTurns: [],
+    pendingActivity: [],
+    needsConsolidation: false,
+    consolidation: emptyConsolidation(),
     // Counter capture milik sesi anak, bukan milik parent.
     captureCounters: { always: 0, likely: 0, noiseSkipped: 0 },
+    inheritedDepth: (parent.inheritedDepth ?? (parent.parentSnapshotFrom ? 1 : 0)) + 1,
     updatedAt: new Date().toISOString(),
   }
-  await writeMemory(toSessionID, copy)
 }
 
 /** Removes the memory file of a session and any corrupt backups left beside it. */

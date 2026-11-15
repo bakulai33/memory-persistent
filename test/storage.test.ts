@@ -7,7 +7,6 @@ import {
   emptyMemory,
   readMemory,
   writeMemory,
-  copyMemory,
   deleteMemoryFiles,
   listMemoryFiles,
   markDeleted,
@@ -15,7 +14,7 @@ import {
   capPendingTurns,
   addActivity,
 } from "../src/storage"
-import { appendNote } from "../src/memory"
+import { appendNote, copyMemory } from "../src/memory"
 import { canConsolidate, emptyConsolidation } from "../src/consolidation"
 
 describe("storage", () => {
@@ -126,8 +125,9 @@ describe("storage", () => {
 
     const child = await readMemory("ses_c")
     expect(child.parentSnapshotFrom).toBe("ses_p")
-    expect(child.notes.length).toBe(1)
-    expect(child.notes[0].text).toBe("parent note")
+    expect(child.notesInherited!.length).toBe(1)
+    expect(child.notesInherited![0].text).toBe("parent note")
+    expect(child.notes.length).toBe(0)
   })
 
   test("salinMemoriMenyisahkanFactsWarisan", async () => {

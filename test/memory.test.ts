@@ -20,8 +20,8 @@ import {
   finishSuccess,
   finishFailure,
 } from "../src/consolidation"
-import { emptyMemory, addActivity, type PendingTurn, writeMemory, readMemory } from "../src/storage"
-import { copyMemory } from "../src/storage"
+import { emptyMemory, addActivity, type PendingTurn, writeMemory, readMemory, updateMemory } from "../src/storage"
+import { copyMemory } from "../src/memory"
 import { defaultTokenCounter } from "../src/tokenizer"
 
 const turn = (id: string, excerpt: string): PendingTurn => ({
@@ -86,6 +86,44 @@ describe("memory", () => {
     const out = buildInjection(child, 5000)
     expect(out).toContain("Inherited from parent session:")
     expect(out).toContain("bun test")
+  })
+
+  test("copyMemory waits for an in-flight parent update before reading (I5)", async () => {
+    await writeMemory("cm_parent", emptyMemory("cm_parent"))
+    const order: string[] = []
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const update = updateMemory("cm_parent", async (m) => {
+      order.push("update-start")
+      await gate
+      m.summary = "held"
+      order.push("update-end")
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const copy = copyMemory("cm_parent", "cm_child").then(() => {
+      order.push("copy-read")
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    // selama update memegang lock, copyMemory belum membaca di luar lock
+    expect(order).toEqual(["update-start"])
+    release()
+    await Promise.all([update, copy])
+    expect(order).toEqual(["update-start", "update-end", "copy-read"])
+  })
+
+  test("copyMemory to itself is a no-op", async () => {
+    const parent = emptyMemory("cm_same")
+    appendNote(parent, "keep me")
+    await writeMemory("cm_same", parent)
+
+    await copyMemory("cm_same", "cm_same")
+
+    const after = await readMemory("cm_same")
+    expect(after.notes.length).toBe(1)
+    expect(after.parentSnapshotFrom).toBeNull()
+    expect(after.inheritedDepth).toBe(0)
   })
 
   test("buildInjection includes summary, conversation, notes and activity", () => {

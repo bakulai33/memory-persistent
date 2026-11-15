@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import type { MemoryFile, MemoryNote, PendingTurn } from "./storage.js"
-import { capActivity, capPendingTurns, readMemory, writeMemory } from "./storage.js"
+import { capActivity, capPendingTurns, readMemory, readMemoryLocked, writeMemory, buildSnapshot } from "./storage.js"
 import { defaultTokenCounter, truncateToTokenBudget } from "./tokenizer.js"
 import { redact } from "./redact.js"
 import { deltaAttemptId } from "./consolidation.js"
@@ -247,6 +247,17 @@ export async function loadMemory(sessionID: string, parentSnapshotFrom: string |
 
 export async function saveMemory(sessionID: string, memory: MemoryFile): Promise<void> {
   await writeMemory(sessionID, memory)
+}
+
+/**
+ * Copies a parent's memory into a labeled child snapshot. The parent is read
+ * under its lock (`readMemoryLocked`), so an in-flight update finishes first,
+ * and the child is built by the pure `buildSnapshot`.
+ */
+export async function copyMemory(fromSessionID: string, toSessionID: string): Promise<void> {
+  if (fromSessionID === toSessionID) return
+  const parent = await readMemoryLocked(fromSessionID)
+  await writeMemory(toSessionID, buildSnapshot(parent, toSessionID))
 }
 
 export function collectDelta(m: MemoryFile): Delta {

@@ -4,7 +4,6 @@ import { Cause, Effect, Exit, Schema, Stream } from "effect"
 import {
   addActivity,
   buildInfoPath,
-  copyMemory,
   deleteMemoryFiles,
   listMemoryFiles,
   markDeleted,
@@ -19,6 +18,7 @@ import {
   buildConsolidationPrompt,
   buildInjection,
   buildRecallPayload,
+  copyMemory,
   collectDelta,
   applyDelta,
   runConsolidation,
