@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test"
 import { parseShellCommands, classifyToolCall, SHELL_ALLOW, normalizeActivityTarget } from "../src/metadata"
 import { emptyMemory, addActivity } from "../src/storage"
+import { redact } from "../src/redact"
 
 describe("parseShellCommands", () => {
   test("reads the command name of a chained invocation", () => {
@@ -197,5 +198,57 @@ describe("classifyToolCall", () => {
     for (const e of entries) addActivity(m, e as any)
     const facts = m.pendingActivity.map((a) => `- ${a.kind}: ${a.target}`).join("\n")
     expect(facts.split("\n").every((l) => l.startsWith("- "))).toBe(true)
+  })
+})
+
+describe("redact patterns", () => {
+  // [nama, input, rahasia yang HARUS hilang]
+  const secrets: Array<[string, string, string]> = [
+    ["Basic auth header", "Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"],
+    ["Proxy-Authorization header", "Proxy-Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"],
+    ["AWS access key id", "upload failed for AKIAIOSFODNN7EXAMPLE bucket", "AKIAIOSFODNN7EXAMPLE"],
+    [
+      "JWT",
+      "invalid jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c",
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c",
+    ],
+    ["postgres URL credentials", "connect postgres://user:pass@db.local/app", "user:pass"],
+    ["https URL credentials", "clone https://user:pass@github.com/org/repo", "user:pass"],
+    ["fine-grained GitHub token", "auth github_pat_11AAAAAAA0abcdefghijKLMNOPqrstuvwxYZ123456", "github_pat_11AAAAAAA0abcdefghijKLMNOPqrstuvwxYZ123456"],
+    [
+      "multiline private key block",
+      "verify -----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\nabc123\n-----END RSA PRIVATE KEY----- done",
+      "MIIEowIBAAKCAQEA",
+    ],
+  ]
+
+  for (const [name, input, secret] of secrets) {
+    test(`redacts ${name}`, () => {
+      const out = redact(input)
+      expect(out).not.toContain(secret)
+      expect(out).toContain("[REDACTED]")
+    })
+  }
+
+  test("keeps text around a multiline private key block", () => {
+    const out = redact("verify -----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY----- done")
+    expect(out.startsWith("verify ")).toBe(true)
+    expect(out.endsWith(" done")).toBe(true)
+  })
+
+  test("keeps the scheme and host of a credentialed URL", () => {
+    const out = redact("connect postgres://user:pass@db.local/app")
+    expect(out).toContain("postgres://")
+    expect(out).toContain("@db.local/app")
+  })
+
+  test("does not redact a bare Authorization word without a value", () => {
+    const input = "the Authorization header was missing"
+    expect(redact(input)).toBe(input)
+  })
+
+  test("does not redact the plain word token without a value", () => {
+    const input = "the token is expired"
+    expect(redact(input)).toBe(input)
   })
 })
