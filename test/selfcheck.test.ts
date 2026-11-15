@@ -97,3 +97,133 @@ test("pathSkillDiturunkanDariLokasiPlugin", () => {
   const src = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf8")
   expect(src).not.toContain("/home/<user>/Documents")
 })
+
+describe("checkSourceTree: export forms and resolution", () => {
+  test("default exports satisfy a default import", () => {
+    const dir = tree([
+      ["index.ts", 'import dep from "./dep.js"\nimport { named } from "./dep.js"\nconsole.log(dep, named)\n'],
+      ["dep.ts", "export default 1\nexport const named = 2\n"],
+    ])
+    expect(checkSourceTree(dir)).toEqual([])
+  })
+
+  test("re-exports count as the re-exported names", () => {
+    const dir = tree([
+      ["index.ts", 'export { helper } from "./helper.js"\nimport { helper } from "./helper.js"\nconsole.log(helper)\n'],
+      ["helper.ts", "export const helper = 1\n"],
+    ])
+    expect(checkSourceTree(dir)).toEqual([])
+  })
+
+  test("a re-exported name that the target lacks is reported", () => {
+    const dir = tree([
+      ["index.ts", 'export { missing } from "./dep.js"\n'],
+      ["dep.ts", "export const present = 1\n"],
+    ])
+    const m = checkSourceTree(dir)
+    expect(m).toHaveLength(1)
+    expect(m[0]!.missing).toEqual(["missing"])
+  })
+
+  test("aliased exports and imports resolve through the alias", () => {
+    const dir = tree([
+      ["index.ts", 'import { orig as renamed } from "./dep.js"\nconsole.log(renamed)\n'],
+      ["dep.ts", "export const orig = 1\nexport { orig as alias }\n"],
+    ])
+    expect(checkSourceTree(dir)).toEqual([])
+  })
+
+  test("a re-export alias does not create a local binding (original name imports)", () => {
+    // `export { hidden as visible } from X` membuat `visible` terlihat bagi PEMAKAI
+    // index.ts, bukan binding lokal — jadi import lokal harus memakai nama aslinya.
+    const dir = tree([
+      ["index.ts", 'export { hidden as visible } from "./dep.js"\nimport { hidden } from "./dep.js"\nconsole.log(hidden)\n'],
+      ["dep.ts", "export const hidden = 1\n"],
+    ])
+    expect(checkSourceTree(dir)).toEqual([])
+  })
+
+  test("a re-export alias whose original name is missing is reported by that name", () => {
+    const dir = tree([
+      ["index.ts", 'export { ghost as visible } from "./dep.js"\n'],
+      ["dep.ts", "export const present = 1\n"],
+    ])
+    const m = checkSourceTree(dir)
+    expect(m).toHaveLength(1)
+    expect(m[0]!.missing).toEqual(["ghost"])
+  })
+
+  test("type-only imports and interfaces are honoured", () => {
+    const dir = tree([
+      ["index.ts", 'import type { Shape } from "./dep.js"\nimport { make } from "./dep.js"\nconst s: Shape = make()\nconsole.log(s)\n'],
+      ["dep.ts", "export interface Shape { a: number }\nexport function make(): Shape { return { a: 1 } }\n"],
+    ])
+    expect(checkSourceTree(dir)).toEqual([])
+  })
+
+  test("a .js specifier maps to the .ts file on disk", () => {
+    const dir = tree([
+      ["index.ts", 'import { a } from "./a.js"\nconsole.log(a)\n'],
+      ["a.ts", "export const a = 1\n"],
+    ])
+    expect(checkSourceTree(dir)).toEqual([])
+  })
+
+  test("a directory import resolves to its index.ts", () => {
+    const root = mkdtempSync(join(tmpdir(), "selfcheck-"))
+    trees.push(root)
+    const dir = join(root, "src")
+    mkdirSync(join(dir, "mod"), { recursive: true })
+    writeFileSync(join(dir, "index.ts"), 'import { a } from "./mod/index.js"\nconsole.log(a)\n')
+    writeFileSync(join(dir, "mod", "index.ts"), "export const a = 1\n")
+    expect(checkSourceTree(dir)).toEqual([])
+  })
+
+  test("an import from a missing module is skipped, not a mismatch", () => {
+    const dir = tree([
+      ["index.ts", 'import { ghost } from "./nowhere.js"\nconsole.log(ghost)\n'],
+    ])
+    expect(checkSourceTree(dir)).toEqual([])
+  })
+
+  test("an unreadable index.ts yields no mismatches", () => {
+    // A directory with no index.ts: the check reads it, fails, and returns [].
+    const dir = tree([["other.ts", "export const x = 1\n"]])
+    expect(checkSourceTree(dir)).toEqual([])
+  })
+
+  test("non-local imports (packages) are ignored", () => {
+    const dir = tree([
+      ["index.ts", 'import { Effect } from "effect"\nconsole.log(Effect)\n'],
+    ])
+    expect(checkSourceTree(dir)).toEqual([])
+  })
+
+  test("side-effect imports add no names to check", () => {
+    const dir = tree([
+      ["index.ts", 'import "./dep.js"\n'],
+      ["dep.ts", "export const a = 1\n"],
+    ])
+    expect(checkSourceTree(dir)).toEqual([])
+  })
+})
+
+describe("sourceHash: error paths", () => {
+  test("a directory that cannot be read hashes to the empty SHA", () => {
+    // A nonexistent dir: readdir fails, entries=[] -> hash of nothing.
+    const missing = join(tmpdir(), "selfcheck-nonexistent-zz")
+    rmSync(missing, { force: true, recursive: true })
+    expect(sourceHash(missing)).toHaveLength(64)
+  })
+
+  test("a subdirectory is skipped (files only hash)", () => {
+    const root = mkdtempSync(join(tmpdir(), "selfcheck-"))
+    trees.push(root)
+    const dir = join(root, "src")
+    mkdirSync(join(dir, "sub"), { recursive: true })
+    writeFileSync(join(dir, "a.ts"), "export const a = 1\n")
+    writeFileSync(join(dir, "sub", "b.ts"), "export const b = 2\n")
+    // Only a.ts (top level) participates.
+    expect(sourceHash(dir)).toBe(sourceHash(tree([["a.ts", "export const a = 1\n"]])))
+  })
+})
