@@ -171,7 +171,7 @@ describe("readMemory migration", () => {
     expect(v4.captureCounters).toEqual({ always: 0, likely: 0, noiseSkipped: 0 })
   })
 
-  test("reads a v1 file and returns it as v3", async () => {
+  test("reads a v1 file and returns it as v4", async () => {
     mkdirSync(memoryDir(), { recursive: true })
     writeFileSync(
       join(memoryDir(), "ses_old.json"),
@@ -188,6 +188,93 @@ describe("readMemory migration", () => {
     expect(memory.version).toBe(4)
     expect(memory.pendingTurns.length).toBe(1)
     expect(memory.pendingTurns[0]?.userExcerpt).toBe("a real question")
+  })
+})
+
+describe("additive v4 fields", () => {
+  let dir: string
+  let orig: string | undefined
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mem-"))
+    orig = process.env.XDG_DATA_HOME
+    process.env.XDG_DATA_HOME = dir
+  })
+
+  afterEach(() => {
+    if (orig === undefined) delete process.env.XDG_DATA_HOME
+    else process.env.XDG_DATA_HOME = orig
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const v4File = (sessionID: string, overrides: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      version: 4,
+      sessionID,
+      parentSnapshotFrom: null,
+      build: "0.5.0",
+      summary: "",
+      summaryFacts: "",
+      summaryFactsInherited: "",
+      summaryNarrative: "",
+      notes: [],
+      pendingTurns: [],
+      pendingActivity: [],
+      needsConsolidation: false,
+      consolidation: { state: "idle", attemptId: null, startedAt: null, finishedAt: null, error: null, consecutiveFailures: 0, deferrals: 0, deferredSince: null, lastAttemptAt: null, consolidatedNotes: 0 },
+      captureCounters: { always: 0, likely: 0, noiseSkipped: 0 },
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      ...overrides,
+    })
+
+  test("a native v4 file without the new fields reads with defaults", async () => {
+    mkdirSync(memoryDir(), { recursive: true })
+    writeFileSync(join(memoryDir(), "ses_v4a.json"), v4File("ses_v4a"))
+    const memory = await readMemory("ses_v4a")
+    expect(memory.notesInherited).toEqual([])
+    expect(memory.inheritedDepth).toBe(0)
+  })
+
+  test("inheritedDepth is 1 when the file has a parent", async () => {
+    mkdirSync(memoryDir(), { recursive: true })
+    writeFileSync(join(memoryDir(), "ses_v4b.json"), v4File("ses_v4b", { parentSnapshotFrom: "ses_parent" }))
+    const memory = await readMemory("ses_v4b")
+    expect(memory.notesInherited).toEqual([])
+    expect(memory.inheritedDepth).toBe(1)
+  })
+
+  test("a file upgraded from v3 gets the defaults too", async () => {
+    mkdirSync(memoryDir(), { recursive: true })
+    writeFileSync(
+      join(memoryDir(), "ses_v3i.json"),
+      JSON.stringify({
+        version: 3,
+        sessionID: "ses_v3i",
+        parentSnapshotFrom: "ses_parent3",
+        build: "0.4.0",
+        summary: "old summary",
+        summaryFacts: "- command: bun test (17x)",
+        summaryNarrative: "narr",
+        notes: [],
+        pendingTurns: [],
+        pendingActivity: [],
+        needsConsolidation: false,
+        consolidation: { state: "idle", attemptId: null, startedAt: null, finishedAt: null, error: null, consecutiveFailures: 0, deferrals: 0, deferredSince: null, lastAttemptAt: null, consolidatedNotes: 0 },
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    )
+    const memory = await readMemory("ses_v3i")
+    expect(memory.version).toBe(4)
+    expect(memory.notesInherited).toEqual([])
+    expect(memory.inheritedDepth).toBe(1)
+  })
+
+  test("a wrong-typed notesInherited passes through without throwing", async () => {
+    mkdirSync(memoryDir(), { recursive: true })
+    writeFileSync(join(memoryDir(), "ses_v4c.json"), v4File("ses_v4c", { notesInherited: 5 }))
+    const memory = await readMemory("ses_v4c")
+    expect(memory.notesInherited as unknown).toBe(5)
+    expect(memory.inheritedDepth).toBe(0)
   })
 })
 

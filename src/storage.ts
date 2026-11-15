@@ -50,6 +50,10 @@ export interface MemoryFile {
   needsConsolidation: boolean
   consolidation: Consolidation
   captureCounters: { always: number; likely: number; noiseSkipped: number }
+  /** Notes inherited from the parent snapshot. Absent in files written before child inheritance; normalized on read. */
+  notesInherited?: MemoryNote[]
+  /** How many generations the inherited notes descend. 0 when the file has no parent. Normalized on read. */
+  inheritedDepth?: number
   updatedAt: string
 }
 
@@ -249,6 +253,11 @@ export async function readMemory(sessionID: string): Promise<MemoryFile> {
     } else {
       throw new Error("bad schema")
     }
+    // Additive v4 fields: files written before child inheritance carry no value,
+    // so fill the defaults on every file that comes back as the current version.
+    // Present values pass through untouched; full type normalization is Task 5.3.
+    memory.notesInherited ??= []
+    memory.inheritedDepth ??= memory.parentSnapshotFrom ? 1 : 0
     recoverStaleAttempt(memory)
     return memory
   } catch (err: any) {
