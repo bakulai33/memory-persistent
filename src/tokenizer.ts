@@ -3,10 +3,13 @@ import { countTokens } from "gpt-tokenizer"
 export type TokenCounter = (text: string) => number
 
 export const defaultTokenCounter: TokenCounter = (text: string): number => {
+  // A non-string caller would leave `text.length` undefined in the fallback
+  // (NaN poisoning every budget sum), so coerce once at the boundary.
+  const s = typeof text === "string" ? text : String(text)
   try {
-    return countTokens(text)
+    return countTokens(s)
   } catch {
-    return Math.ceil(text.length / 4)
+    return Math.ceil(s.length / 4)
   }
 }
 
