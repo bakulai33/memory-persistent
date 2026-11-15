@@ -126,6 +126,17 @@ describe("delta", () => {
     expect(m.notes[0]?.text).toBe("keep me")
   })
 
+  test("applyDelta redacts the narrative before storing it", () => {
+    const m = emptyMemory("s5")
+    beginAttempt(m, "a5")
+    addPendingTurn(m, turn("t1", "a"))
+    const delta = collectDelta(m)
+    applyDelta(m, delta, "used key AKIAIOSFODNN7EXAMPLE for the deploy")
+    expect(m.summaryNarrative).toContain("[REDACTED]")
+    expect(m.summaryNarrative).not.toContain("AKIA")
+    expect(m.summary).not.toContain("AKIA")
+  })
+
   test("applyDelta is a no-op when attemptId differs", () => {
     const m = emptyMemory("s4")
     beginAttempt(m, "real")

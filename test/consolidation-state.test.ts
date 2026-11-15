@@ -57,6 +57,15 @@ describe("consolidation state", () => {
     expect(m.consolidation.consecutiveFailures).toBe(1)
   })
 
+  test("finishFailure redacts the error", () => {
+    const m = emptyMemory("s2")
+    beginAttempt(m, "idB")
+    const ok = finishFailure(m, "idB", "auth failed: password=hunter2")
+    expect(ok).toBe(true)
+    expect(m.consolidation.error).toContain("[REDACTED]")
+    expect(m.consolidation.error).not.toContain("hunter2")
+  })
+
   test("recoverStaleAttempt stale", () => {
     const m = emptyMemory("s1")
     beginAttempt(m, "idA", Date.now() - 6 * 60_000)

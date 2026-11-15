@@ -487,6 +487,8 @@ export function validateStoreInput(text: unknown, tags: unknown): string | null 
 
 export function applyDelta(m: MemoryFile, delta: Delta, narrative: string, budget = 5000): void {
   if (m.consolidation.attemptId !== delta.attemptId) return
+  // Narrative content is always redacted at rest, on every branch (redact("") === "").
+  narrative = redact(narrative)
   const turnSet = new Set(delta.turnIds)
   const activitySet = new Set(delta.activityIds)
   m.pendingTurns = m.pendingTurns.filter((t) => !turnSet.has(t.turnId))

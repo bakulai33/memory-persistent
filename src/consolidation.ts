@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import type { MemoryFile } from "./storage.js"
 import { buildConsolidationInput, estimatePromptTokens } from "./memory.js"
+import { redact } from "./redact.js"
 
 export interface Consolidation {
   state: "idle" | "running" | "failed"
@@ -86,7 +87,7 @@ export function finishFailure(m: MemoryFile, attemptId: string, error: string, n
   c.state = "failed"
   c.attemptId = null
   c.finishedAt = new Date(now).toISOString()
-  c.error = String(error).slice(0, 200)
+  c.error = redact(String(error)).slice(0, 200)
   if (!Number.isFinite(c.consecutiveFailures)) c.consecutiveFailures = 0
   c.consecutiveFailures += 1
   return true
