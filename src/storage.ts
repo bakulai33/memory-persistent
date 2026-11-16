@@ -384,7 +384,7 @@ async function writeMemoryUnlocked(sessionID: string, memory: MemoryFile): Promi
   // The build that last wrote the file is always the running build: a migration
   // is read-only and never stamps, so drift clears after the next real write.
   memory.build = BUILD
-  await mkdir(dirname(path), { recursive: true })
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const tmp = `${path}.tmp.${process.pid}.${Date.now()}.${randomUUID()}`
   await writeFile(tmp, JSON.stringify(memory, null, 2), { encoding: "utf8", mode: 0o600 })
   await rename(tmp, path)

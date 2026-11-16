@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test"
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { Effect, Stream } from "effect"
 import {
   buildHealthReport,
@@ -11,7 +11,7 @@ import {
   resetHealthState,
   type HealthReport,
 } from "../src/health"
-import { logEvent } from "../src/log"
+import { logEvent, logPath } from "../src/log"
 import { addActivity, emptyMemory, type MemoryFile } from "../src/storage"
 import { addPendingTurn } from "../src/memory"
 import { writeMemory, readMemory } from "../src/storage"
@@ -440,5 +440,32 @@ describe("the memory_health tool", () => {
     expect(report.sourceTreeOk).toBe(true)
     expect(report.sourceHash.length).toBeGreaterThan(0)
     expect(report.capture).toEqual({ always: 0, likely: 0, noiseSkipped: 0 })
+  })
+})
+
+describe("log dir mode", () => {
+  let dir: string
+  let orig: string | undefined
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mem-log-mode-"))
+    orig = process.env.XDG_DATA_HOME
+    process.env.XDG_DATA_HOME = dir
+  })
+
+  afterEach(() => {
+    if (orig === undefined) delete process.env.XDG_DATA_HOME
+    else process.env.XDG_DATA_HOME = orig
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("a fresh log dir is created with mode 0700", () => {
+    const errors = spyOn(console, "error").mockImplementation(() => {})
+    try {
+      logEvent("dir-mode-test", {})
+      expect(statSync(dirname(logPath())).mode & 0o777).toBe(0o700)
+    } finally {
+      errors.mockRestore()
+    }
   })
 })

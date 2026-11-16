@@ -511,6 +511,7 @@ export function mergeSummary(facts: string, narrative: string, budget: number): 
 export function validateStoreInput(text: unknown, tags: unknown): string | null {
   const trimmed = typeof text === "string" ? text.trim() : ""
   if (!trimmed) return "Rejected: text is empty"
+  if (trimmed.length > 8192) return "Rejected: text too long (max 8 KB)"
   if (!Array.isArray(tags)) return null
   if (tags.length > 16) return "Rejected: too many tags (max 16)"
   for (const tag of tags) {

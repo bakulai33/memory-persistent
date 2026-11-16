@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test"
-import { existsSync, mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs"
 import { randomUUID } from "node:crypto"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -13,10 +13,11 @@ import {
   markDeleted,
   isDeleted,
   memoryPath,
+  memoryDir,
   capPendingTurns,
   addActivity,
 } from "../src/storage"
-import { appendNote, copyMemory } from "../src/memory"
+import { appendNote, copyMemory, validateStoreInput } from "../src/memory"
 import { canConsolidate, emptyConsolidation } from "../src/consolidation"
 
 describe("storage", () => {
@@ -344,6 +345,16 @@ describe("storage", () => {
     expect(m.consolidation.state).toBe("failed")
     expect(m.consolidation.consecutiveFailures).toBe(1)
     expect(canConsolidate(m)).toBe(true)
+  })
+
+  test("a fresh memory dir is created with mode 0700", async () => {
+    await writeMemory("ses_dir700", emptyMemory("ses_dir700"))
+    expect(statSync(memoryDir()).mode & 0o777).toBe(0o700)
+  })
+
+  test("validateStoreInput rejects text over 8 KB", () => {
+    expect(validateStoreInput("x".repeat(8193), [])).toBe("Rejected: text too long (max 8 KB)")
+    expect(validateStoreInput("x".repeat(8192), [])).toBeNull()
   })
 })
 

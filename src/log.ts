@@ -57,7 +57,7 @@ export function logEvent(event: string, fields: Record<string, unknown> = {}): v
   // not capture plugin console output. Redaction already happened above.
   try {
     const path = logPath()
-    mkdirSync(dirname(path), { recursive: true })
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     appendFileSync(path, `${line}\n`, { encoding: "utf8", mode: 0o600 })
     let size = 0
     let mode = 0

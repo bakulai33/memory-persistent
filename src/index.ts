@@ -57,7 +57,8 @@ import { logEvent, logPath } from "./log.js"
 import { classifyToolCall } from "./metadata.js"
 import { checkSourceTree, sourceHash } from "./selfcheck.js"
 import { BUILD, SCHEMA_VERSION } from "./build.js"
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { randomUUID } from "node:crypto"
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -141,9 +142,10 @@ export default define({
       if (previous !== null && previous !== hash) {
         logEvent("drift", { fileBuild: previous, runningBuild: hash })
       }
-      mkdirSync(dirname(path), { recursive: true })
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+      const tmp = `${path}.tmp.${process.pid}.${Date.now()}.${randomUUID()}`
       writeFileSync(
-        path,
+        tmp,
         JSON.stringify(
           {
             build: BUILD,
@@ -157,14 +159,10 @@ export default define({
         ),
         { encoding: "utf8", mode: 0o600 },
       )
-      // The mode of a write only applies to a file it creates, so a build
-      // record that already exists keeps its old permissions until they are
-      // corrected here.
-      try {
-        chmodSync(path, 0o600)
-      } catch {
-        // A build record that cannot be tightened is still worth writing.
-      }
+      // The rename replaces any existing record atomically: readers see either
+      // the old or the new file, never a partial write. The replacement also
+      // gives the record a fresh inode, so its creation mode applies again.
+      renameSync(tmp, path)
     } catch (error) {
       logEvent("build record", { error: error instanceof Error ? error.message : String(error) })
     }

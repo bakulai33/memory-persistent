@@ -8,10 +8,10 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { Effect, Stream } from "effect"
 import plugin from "../src/index"
-import { emptyMemory, writeMemory, readMemory, memoryDir, updateMemory } from "../src/storage"
+import { emptyMemory, writeMemory, readMemory, memoryDir, buildInfoPath, updateMemory } from "../src/storage"
 import { appendNote, addPendingTurn } from "../src/memory"
 
 describe("plugin (tools, hooks, events)", () => {
@@ -139,6 +139,18 @@ describe("plugin (tools, hooks, events)", () => {
       expect(result.content[0].text).toBe(message)
     }
     const m = await readMemory("ses_rej")
+    expect(m.notes).toHaveLength(0)
+  })
+
+  test("memory_store rejects a note over 8 KB", async () => {
+    const { ctx, tools } = mockContext("ses_long")
+    await activate(ctx)
+    const tool = tools.get("memory_store")!
+    const result = (await Effect.runPromise(tool.execute({ text: "x".repeat(8193) }, { sessionID: "ses_long" }))) as {
+      content: { type: string; text: string }[]
+    }
+    expect(result.content[0].text).toContain("Rejected: text too long (max 8 KB)")
+    const m = await readMemory("ses_long")
     expect(m.notes).toHaveLength(0)
   })
 
@@ -621,6 +633,28 @@ describe("plugin (tools, hooks, events)", () => {
     expect(event).toContain("error=")
     // the failed copy must not have created the child memory file
     expect(existsSync(join(memoryDir(), "ses_fk2.json"))).toBe(false)
+  })
+
+  test("build.json is replaced atomically: a rewrite gets a new inode and leaves no tmp leftover", async () => {
+    const ctx1 = mockContext("ses_atomic1").ctx
+    await activateHeld(ctx1)
+    const path = buildInfoPath()
+    const ino1 = statSync(path).ino
+
+    const ctx2 = mockContext("ses_atomic2").ctx
+    await activateHeld(ctx2)
+    const stat2 = statSync(path)
+    // tmp+rename replaces the file (new inode); a direct truncate+write keeps it.
+    expect(stat2.ino).not.toBe(ino1)
+    // the record still parses with the expected keys
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
+    for (const key of ["build", "schema", "sourceHash", "pid", "startedAt"]) {
+      expect(key in parsed).toBe(true)
+    }
+    expect(stat2.mode & 0o777).toBe(0o600)
+    // no tmp leftover beside the record
+    const leftovers = readdirSync(dirname(path)).filter((f) => f.includes(".tmp."))
+    expect(leftovers).toHaveLength(0)
   })
 
   test("activation survives an unwritable build-record path", async () => {
