@@ -592,6 +592,37 @@ describe("plugin (tools, hooks, events)", () => {
     await activateHeld(ctx)
   })
 
+  test("failed session.deleted is logged, not swallowed", async () => {
+    const { ctx } = mockContext("ses_life2", [
+      { type: "session.deleted", data: { sessionID: "bad/id" } },   // sanitize throws -> catch
+    ])
+    await activateHeld(ctx)
+    const lines: string[] = errors.mock.calls.map((c: any[]) => String(c[0]))
+    const event = lines.find((l) => l.includes("session-event"))
+    expect(event).toBeDefined()
+    expect(event).toContain("type=session.deleted")
+    expect(event).toContain("sid=bad/id")
+    expect(event).toContain("error=")
+    // the bad id must not have produced any memory file
+    const files = existsSync(memoryDir()) ? readdirSync(memoryDir()).filter((f) => f.endsWith(".json")) : []
+    expect(files).toHaveLength(0)
+  })
+
+  test("failed fork copy is logged, not swallowed", async () => {
+    const { ctx } = mockContext("ses_life3", [
+      { type: "session.forked", data: { sessionID: "ses_fk2", parentID: "bad/parent" } },
+    ])
+    await activateHeld(ctx)
+    const lines: string[] = errors.mock.calls.map((c: any[]) => String(c[0]))
+    const event = lines.find((l) => l.includes("session-event"))
+    expect(event).toBeDefined()
+    expect(event).toContain("type=session.forked")
+    expect(event).toContain("sid=ses_fk2")
+    expect(event).toContain("error=")
+    // the failed copy must not have created the child memory file
+    expect(existsSync(join(memoryDir(), "ses_fk2.json"))).toBe(false)
+  })
+
   test("activation survives an unwritable build-record path", async () => {
     const root = join(dir, "opencode", "memory-persistent")
     mkdirSync(root, { recursive: true })

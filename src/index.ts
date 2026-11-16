@@ -563,7 +563,14 @@ export default define({
               markDeleted(id)
               await deleteMemoryFiles(id)
               resetHealthState(id)
-            } catch {}
+            } catch (error) {
+              // Best-effort cleanup: swallow, but leave a trace of why.
+              logEvent("session-event", {
+                type: event.type,
+                sid: sessionID,
+                error: error instanceof Error ? error.message : String(error),
+              })
+            }
           })
         }
 
@@ -575,7 +582,14 @@ export default define({
             const to = sanitizeSessionID(sessionID)
             const from = sanitizeSessionID(parentID)
             await copyMemory(from, to)
-          } catch {}
+          } catch (error) {
+            // Best-effort inheritance: swallow, but leave a trace of why.
+            logEvent("session-event", {
+              type: event.type,
+              sid: sessionID,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          }
         })
       }),
       Effect.forkScoped({ startImmediately: true }),
