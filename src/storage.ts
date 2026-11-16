@@ -3,6 +3,7 @@ import { dirname, join } from "node:path"
 import { homedir } from "node:os"
 import { randomUUID } from "node:crypto"
 import { BUILD, SCHEMA_VERSION } from "./build.js"
+import { dataRoot } from "./log.js"
 import { emptyConsolidation, recoverStaleAttempt } from "./consolidation.js"
 import type { Consolidation } from "./consolidation.js"
 import type { CaptureTier } from "./capture.js"
@@ -72,12 +73,6 @@ export function sanitizeSessionID<T extends string>(sessionID: T): T {
   return sessionID
 }
 
-export function dataRoot(): string {
-  const xdg = process.env.XDG_DATA_HOME
-  const base = xdg && xdg.trim() ? xdg : join(homedir(), ".local", "share")
-  return join(base, "opencode")
-}
-
 export function memoryDir(): string {
   return join(dataRoot(), "memory-persistent", "sessions")
 }
@@ -90,11 +85,6 @@ export function buildInfoPath(): string {
 export function memoryPath(sessionID: string): string {
   const id = sanitizeSessionID(sessionID)
   return join(memoryDir(), `${id}.json`)
-}
-
-/** Where the plugin writes its structured log lines. Next to the sessions dir. */
-export function logPath(): string {
-  return join(dataRoot(), "memory-persistent", "plugin.log")
 }
 
 const locks = new Map<string, Promise<void>>()

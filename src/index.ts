@@ -49,12 +49,11 @@ import {
   healthRuntime,
   lastConsolidation,
   logDrift,
-  logEvent,
-  logPath,
   recordConsolidation,
   resetHealthState,
   setHealthRuntime,
 } from "./health.js"
+import { logEvent, logPath } from "./log.js"
 import { classifyToolCall } from "./metadata.js"
 import { checkSourceTree, sourceHash } from "./selfcheck.js"
 import { BUILD, SCHEMA_VERSION } from "./build.js"

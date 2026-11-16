@@ -7,11 +7,11 @@ import {
   buildHealthReport,
   lastConsolidation,
   logDrift,
-  logEvent,
   recordConsolidation,
   resetHealthState,
   type HealthReport,
 } from "../src/health"
+import { logEvent } from "../src/log"
 import { addActivity, emptyMemory, type MemoryFile } from "../src/storage"
 import { addPendingTurn } from "../src/memory"
 import { writeMemory, readMemory } from "../src/storage"

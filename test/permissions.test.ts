@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, chmodSync, statSync } fr
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { repairPermissions, writeMemory, emptyMemory } from "../src/storage"
-import { logEvent } from "../src/health"
+import { logEvent } from "../src/log"
 
 describe("permissions", () => {
   let dir: string
