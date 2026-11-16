@@ -528,8 +528,6 @@ function isPrivateFile(name: string): boolean {
   return name.includes(".json.corrupt.")
 }
 
-/** Lists the memory files on disk, including the corrupt backups that a failed parse left behind. */
-
 /** A tmp file older than this is a leftover from a crashed atomic write, not an in-flight one. */
 const TMP_MAX_AGE_MS = 3600_000
 
@@ -584,6 +582,7 @@ export async function repairPermissions(dir?: string): Promise<{ files: number; 
   return { files, dirs }
 }
 
+/** Lists the memory files on disk, including the corrupt backups that a failed parse left behind. */
 export async function listMemoryFiles(): Promise<MemoryFileEntry[]> {
   const dir = memoryDir()
   let entries: string[]
