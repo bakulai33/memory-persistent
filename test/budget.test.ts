@@ -14,6 +14,38 @@ import { emptyMemory, addActivity } from "../src/storage"
 import { beginAttempt } from "../src/consolidation"
 import { collectDelta } from "../src/memory"
 
+describe("B1 own wins, inherited per-block truncated (Task 3.3)", () => {
+  test("own facts survive; inherited truncated from head under small budget (B1)", () => {
+    const m = emptyMemory("ses_own")
+    // Own facts long enough that tail-keep over the COMBINED text would cut
+    // into own's HEAD — inverting to per-block must keep all own lines.
+    m.summaryFacts = Array.from({ length: 8 }, (_, i) => `- file: src/own_module_${i}.ts`).join("\n")
+    m.summaryFactsInherited = Array.from({ length: 8 }, (_, i) => `- file: src/inherited_${i}.ts`).join("\n")
+    const out = buildInjection(m, 300)
+    for (let i = 0; i < 8; i++) {
+      expect(out).toContain(`src/own_module_${i}.ts`)
+    }
+    // Inherited tail must be visibly truncated, but the depth-LABEL survives
+    // (label is the HEAD of the inherited block, kept via keep-head trunc).
+    const i0 = out.indexOf("src/inherited_0.ts")
+    const i7 = out.indexOf("src/inherited_7.ts")
+    // At least one inherited tail member is dropped under the budget.
+    expect(i0 === -1 || i7 === -1).toBe(true)
+  })
+
+  test("fallback: newest line prefix-cut when no whole line fits (A6)", () => {
+    const m = emptyMemory("ses_fb")
+    // Both lines live in the SAME fact text; the newest one is so big that no
+    // whole line fits → only the NEWEST line survives, as a prefix.
+    m.summaryFacts = `- command: old_tail\n- command: ${"a".repeat(4000)}`
+    const out = buildInjection(m, 200)
+    // old_tail (older line, same block) is fully dropped, not head-trimmed.
+    expect(out).not.toContain("old_tail")
+    // some "a…" prefix of the newest survives
+    expect(out).toContain("aaa")
+  })
+})
+
 describe("budget alignment", () => {
   let dir: string
   let orig: string | undefined

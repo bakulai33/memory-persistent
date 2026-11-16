@@ -94,6 +94,11 @@ export function allocate(sections: (Section | undefined)[], budget: number): num
 /** Header yang menandai narasi model sebagai belum terverifikasi. */
 const NARRATIVE_LABEL = "Notes (model-generated, unverified):"
 
+/** Depth 1/undefined = parent label (pinned string, keep exact); >1 = N earlier sessions. */
+function depthLabel(depth?: number): string {
+  return depth !== undefined && depth > 1 ? `Inherited from ${depth} earlier sessions:` : "Inherited from parent session:"
+}
+
 export function buildInjection(memory: MemoryFile, budget = 5000): string {
   let summaryCore = ""
   if (memory.summaryFacts || memory.summaryFactsInherited || memory.summaryNarrative) {
@@ -103,16 +108,19 @@ export function buildInjection(memory: MemoryFile, budget = 5000): string {
     const summaryBudget = Math.floor(cap * SUMMARY_BUDGET_SHARE)
     const ownFacts = (memory.summaryFacts ?? "").trim()
     const inheritedFacts = (memory.summaryFactsInherited ?? "").trim()
-    const factsText = inheritedFacts
-      ? `${ownFacts}\n\nInherited from parent session:\n${inheritedFacts}`
-      : ownFacts
-    const factsPart = truncateFacts(factsText, factsBudget)
+    // Own facts are resolved against factsBudget FIRST (tail-keep = newest).
+    // Inherited get only the REMAINING budget, truncated keep-head on the
+    // labeled block (label survives at the head).
+    const ownPart = truncateFacts(ownFacts, factsBudget)
+    const remaining = Math.max(0, factsBudget - defaultTokenCounter(ownPart))
+    const inheritedPart = inheritedFacts ? truncateToTokenBudget(`${depthLabel(memory.inheritedDepth)}\n${inheritedFacts}`, remaining) : ""
+    const factsText = [ownPart, inheritedPart].filter(Boolean).join("\n\n")
     const narrativeRaw = (memory.summaryNarrative ?? "").trim()
-    const narrativeFitted = fitNarrative(factsPart, narrativeRaw, narrativeBudget, summaryBudget)
+    const narrativeFitted = fitNarrative(factsText, narrativeRaw, narrativeBudget, summaryBudget)
     const narrativePart = narrativeFitted
       ? `${NARRATIVE_LABEL}\n${narrativeFitted}`
       : ""
-    summaryCore = [factsPart, narrativePart].filter(Boolean).join("\n\n")
+    summaryCore = [factsText, narrativePart].filter(Boolean).join("\n\n")
     if (defaultTokenCounter(summaryCore) > summaryBudget) summaryCore = truncateToTokenBudget(summaryCore, summaryBudget)
   } else if (memory.summary) {
     summaryCore = memory.summary
@@ -458,7 +466,12 @@ function truncateFacts(facts: string, budget: number): string {
     kept.unshift(line)
     used += cost
   }
-  if (kept.length === 0) return truncateToTokenBudget(facts, budget)
+  if (kept.length === 0) {
+    // A6 fallback: when no whole line fits, prefix-cut only the NEWEST line
+    // (tail of the fact set); older lines are dropped entirely.
+    const lastLine = lines[lines.length - 1] ?? ""
+    return truncateToTokenBudget(lastLine, budget)
+  }
   const joined = kept.join("\n")
   return defaultTokenCounter(joined) > budget ? truncateToTokenBudget(joined, budget) : joined
 }

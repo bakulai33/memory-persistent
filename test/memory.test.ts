@@ -281,3 +281,37 @@ describe("memory", () => {
     expect(validateStoreInput("ok", ["bad\u0000tag"])).toBe("Rejected: invalid tag")
   })
 })
+
+describe("B1b fallback & B2 depth labels (Task 3.3)", () => {
+  test("depth 3 → 'Inherited from 3 earlier sessions:'", () => {
+    const m = emptyMemory("ses_depth3")
+    m.summaryFactsInherited = "- command: hello_world"
+    m.inheritedDepth = 3
+    const out = buildInjection(m, 5000)
+    expect(out).toContain("Inherited from 3 earlier sessions:")
+    expect(out).not.toContain("Inherited from parent session:")
+  })
+
+  test("absent inheritedDepth → 'Inherited from parent session:' (A15)", () => {
+    const m = emptyMemory("ses_parent_unset")
+    m.summaryFactsInherited = "- command: old_fact"
+    delete (m as { inheritedDepth?: number }).inheritedDepth
+    const out = buildInjection(m, 5000)
+    expect(out).toContain("Inherited from parent session:")
+  })
+
+  test("emoji/multibyte at budget boundary: summary section stays within summaryBudget", () => {
+    // Review Focus #1: multi-byte tokens on the inherited side still stay inside
+    // the summary section's budget — either dropped or cut, never overshooting.
+    const m = emptyMemory("ses_emoji")
+    m.summaryFacts = Array.from({ length: 40 }, (_, i) => `- file: own_${i}_🎉🚀🔥`).join("\n")
+    m.summaryFactsInherited = Array.from({ length: 40 }, (_, i) => `- file: inh_${i}_🌊🌶️🎬`).join("\n")
+    const out = buildInjection(m, 500)
+    const summaryStart = out.indexOf("Summary:")
+    expect(summaryStart).toBeGreaterThanOrEqual(0)
+    const afterHeader = out.slice(summaryStart)
+    const summaryBody = afterHeader.split(/\n\n(?=[A-Za-z]+:)/)[0] ?? afterHeader
+    const summaryBudget = Math.floor(500 * 0.5) // SUMMARY_BUDGET_SHARE in src/memory.ts
+    expect(defaultTokenCounter(summaryBody)).toBeLessThanOrEqual(summaryBudget)
+  })
+})
