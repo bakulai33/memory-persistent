@@ -1,5 +1,6 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test"
+import { existsSync, mkdtempSync, rmSync } from "node:fs"
+import { randomUUID } from "node:crypto"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -11,6 +12,7 @@ import {
   listMemoryFiles,
   markDeleted,
   isDeleted,
+  memoryPath,
   capPendingTurns,
   addActivity,
 } from "../src/storage"
@@ -114,6 +116,44 @@ describe("storage", () => {
     for (let i = 0; i < 300; i++) markDeleted(`ses_b${i}`)
     expect(isDeleted("ses_b299")).toBe(true)
     expect(isDeleted("ses_b0")).toBe(false)
+  })
+
+  test("tombstone eviction is logged per evicted id", () => {
+    const errors = spyOn(console, "error").mockImplementation(() => {})
+    try {
+      // Distinct fresh ids: whatever P entries earlier tests left in the
+      // module-level tombstone map, P+257 > 256 evicts exactly P+1 ids FIFO,
+      // so the FIRST fresh id is always among the evicted.
+      const first = `ses_ev_${randomUUID().replace(/-/g, "")}`
+      markDeleted(first)
+      const ids = [first]
+      for (let i = 1; i < 257; i++) {
+        const id = `ses_ev_${randomUUID().replace(/-/g, "")}_${i}`
+        ids.push(id)
+        markDeleted(id)
+      }
+      const last = ids[ids.length - 1]!
+
+      expect(isDeleted(first)).toBe(false)
+      const evictLines = errors.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("tombstone-evict"))
+      expect(evictLines.some((l) => l.includes(`sid=${first}`))).toBe(true)
+      expect(isDeleted(last)).toBe(true)
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
+  test("writing to a deleted session is a logged no-op", async () => {
+    const errors = spyOn(console, "error").mockImplementation(() => {})
+    try {
+      markDeleted("ses_gone2")
+      await writeMemory("ses_gone2", emptyMemory("ses_gone2"))
+      expect(existsSync(memoryPath("ses_gone2"))).toBe(false)
+      const lines = errors.mock.calls.map((c) => String(c[0]))
+      expect(lines.some((l) => l.includes("write-skipped-deleted") && l.includes("sid=ses_gone2"))).toBe(true)
+    } finally {
+      errors.mockRestore()
+    }
   })
 
   test("copyMemory snapshots the parent into the child", async () => {

@@ -65,7 +65,7 @@ export interface MemoryFileEntry {
   readonly file: string
 }
 
-const SESSION_ID_RE = /^[A-Za-z0-9_-]+$/
+const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 
 /** Validates a session id and keeps its brand, so it still fits the OpenCode session types. */
 export function sanitizeSessionID<T extends string>(sessionID: T): T {
@@ -374,7 +374,10 @@ export async function readMemory(sessionID: string): Promise<MemoryFile> {
 
 async function writeMemoryUnlocked(sessionID: string, memory: MemoryFile): Promise<void> {
   const id = sanitizeSessionID(sessionID)
-  if (isDeleted(id)) return
+  if (isDeleted(id)) {
+    logEvent("write-skipped-deleted", { sid: id })
+    return
+  }
   const path = memoryPath(id)
   memory.sessionID = id
   memory.updatedAt = new Date().toISOString()
@@ -603,6 +606,7 @@ export function markDeleted(sessionID: string): void {
     const oldest = deletedSessions.keys().next()
     if (oldest.done) break
     deletedSessions.delete(oldest.value)
+    logEvent("tombstone-evict", { sid: oldest.value })
   }
 }
 

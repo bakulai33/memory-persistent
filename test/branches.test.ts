@@ -229,6 +229,9 @@ describe("storage recovery and degenerate branches", () => {
     expect(() => sanitizeSessionID("")).toThrow()
     expect(() => sanitizeSessionID("sp ace")).toThrow()
     expect(() => sanitizeSessionID("dot.dot")).toThrow()
+    const max = `ses_${"a".repeat(124)}` // exactly 128 characters
+    expect(sanitizeSessionID(max)).toBe(max)
+    expect(() => sanitizeSessionID(`${max}x`)).toThrow() // 129 characters
   })
 })
 
