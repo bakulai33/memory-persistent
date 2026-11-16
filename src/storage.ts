@@ -3,7 +3,7 @@ import { dirname, join } from "node:path"
 import { homedir } from "node:os"
 import { randomUUID } from "node:crypto"
 import { BUILD, SCHEMA_VERSION } from "./build.js"
-import { dataRoot } from "./log.js"
+import { dataRoot, logEvent } from "./log.js"
 import { emptyConsolidation, recoverStaleAttempt } from "./consolidation.js"
 import type { Consolidation } from "./consolidation.js"
 import type { CaptureTier } from "./capture.js"
@@ -196,6 +196,129 @@ function normalizeActivityEntry(raw: unknown): ActivityEntry {
   return { id, kind, target, command, count, turnID, createdAt }
 }
 
+/**
+ * Validates one stored note; a non-conforming element is dropped (null). The
+ * parser contract only pins `text` and `tags` — the identity fields get
+ * sensible defaults the same way activity entries do.
+ */
+function normalizeNote(raw: unknown): MemoryNote | null {
+  if (!raw || typeof raw !== "object") return null
+  const r = raw as Record<string, unknown>
+  if (typeof r.text !== "string") return null
+  if (!Array.isArray(r.tags) || !r.tags.every((t) => typeof t === "string")) return null
+  return {
+    id: typeof r.id === "string" ? r.id : randomUUID(),
+    text: r.text,
+    tags: r.tags as string[],
+    createdAt: typeof r.createdAt === "string" ? r.createdAt : new Date().toISOString(),
+    source: r.source === "manual" ? "manual" : "auto",
+  }
+}
+
+/**
+ * Validates one stored turn; a non-conforming element is dropped (null). The
+ * parser contract pins `turnId`/`messageID` as strings; the tier falls back
+ * through `withTier` to the default "likely".
+ */
+function normalizeTurn(raw: unknown): PendingTurn | null {
+  if (!raw || typeof raw !== "object") return null
+  const r = raw as Record<string, unknown>
+  if (typeof r.turnId !== "string" || typeof r.messageID !== "string") return null
+  return withTier({
+    turnId: r.turnId,
+    messageID: r.messageID,
+    userExcerpt: typeof r.userExcerpt === "string" ? r.userExcerpt : "",
+    createdAt: typeof r.createdAt === "string" ? r.createdAt : new Date().toISOString(),
+    tier: r.tier as CaptureTier | undefined,
+  })
+}
+
+/**
+ * Repairs a parsed v4 file into a MemoryFile. The parser contract: a field of
+ * the wrong type becomes the default and the repair is logged once per field
+ * (dropped elements are counted); a field that is merely absent gets the same
+ * default silently, like the files written before that field existed. Fields
+ * not in the schema are dropped, so a file cannot smuggle state past the
+ * parser. Unknown keys aside, this makes readMemory total: no input shape
+ * throws, and every repair is visible in the log.
+ */
+function normalizeMemory(parsed: unknown, id: string): MemoryFile {
+  const r = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {}
+  const fixed = new Map<string, number | undefined>()
+  const mark = (field: string, dropped?: number) => fixed.set(field, dropped)
+  const str = (field: string, value: unknown): string => {
+    if (typeof value === "string") return value
+    if (value !== undefined) mark(field)
+    return ""
+  }
+  const strOrNull = (field: string, value: unknown): string | null => {
+    if (typeof value === "string" || value === null) return value as string | null
+    if (value !== undefined) mark(field)
+    return null
+  }
+  const counters = (value: unknown): { always: number; likely: number; noiseSkipped: number } => {
+    if (value === undefined || value === null) return { always: 0, likely: 0, noiseSkipped: 0 }
+    const src = typeof value === "object" ? (value as Record<string, unknown>) : null
+    const out = { always: 0, likely: 0, noiseSkipped: 0 }
+    if (!src) {
+      mark("captureCounters")
+      return out
+    }
+    for (const key of ["always", "likely", "noiseSkipped"] as const) {
+      const v = src[key]
+      if (typeof v === "number" && Number.isFinite(v)) out[key] = v
+      else mark("captureCounters")
+    }
+    return out
+  }
+  const array = <T>(field: string, value: unknown, element: (raw: unknown) => T | null): T[] => {
+    if (value === undefined) return []
+    if (!Array.isArray(value)) {
+      mark(field)
+      return []
+    }
+    let dropped = 0
+    const out: T[] = []
+    for (const raw of value) {
+      const el = element(raw)
+      if (el === null) dropped += 1
+      else out.push(el)
+    }
+    if (dropped > 0) mark(field, dropped)
+    return out
+  }
+  const memory: MemoryFile = {
+    version: SCHEMA_VERSION,
+    sessionID: id,
+    parentSnapshotFrom: strOrNull("parentSnapshotFrom", r.parentSnapshotFrom),
+    build: str("build", r.build),
+    summary: str("summary", r.summary),
+    summaryFacts: str("summaryFacts", r.summaryFacts),
+    summaryFactsInherited: str("summaryFactsInherited", r.summaryFactsInherited),
+    summaryNarrative: str("summaryNarrative", r.summaryNarrative),
+    notes: array("notes", r.notes, normalizeNote),
+    notesInherited: array("notesInherited", r.notesInherited, normalizeNote),
+    pendingTurns: array("pendingTurns", r.pendingTurns, normalizeTurn),
+    pendingActivity: array("pendingActivity", r.pendingActivity, normalizeActivityEntry),
+    needsConsolidation: r.needsConsolidation === true,
+    consolidation: normalizeConsolidation(r.consolidation),
+    captureCounters: counters(r.captureCounters),
+    updatedAt: str("updatedAt", r.updatedAt),
+  }
+  // inheritedDepth: a valid number passes through; a merely absent one is
+  // filled by the post-branch default below (parent → 1, else 0); a
+  // present-but-wrong one is logged here and filled the same way.
+  if (typeof r.inheritedDepth === "number" && Number.isFinite(r.inheritedDepth)) {
+    memory.inheritedDepth = r.inheritedDepth
+  } else if (r.inheritedDepth !== undefined) {
+    mark("inheritedDepth")
+  }
+  for (const [field, dropped] of fixed) {
+    logEvent("normalize", { sid: id, field, ...(dropped !== undefined ? { dropped } : {}) })
+  }
+  return memory
+}
+
 export async function readMemory(sessionID: string): Promise<MemoryFile> {
   const id = sanitizeSessionID(sessionID)
   const path = memoryPath(id)
@@ -226,32 +349,20 @@ export async function readMemory(sessionID: string): Promise<MemoryFile> {
         consolidation: normalizeConsolidation(parsed.consolidation),
       }
     } else if (parsed.version === SCHEMA_VERSION) {
-      memory = {
-        ...parsed,
-        build: parsed.build ?? BUILD,
-        summary: parsed.summary ?? "",
-        summaryFacts: parsed.summaryFacts ?? "",
-        summaryFactsInherited: parsed.summaryFactsInherited ?? "",
-        summaryNarrative: parsed.summaryNarrative ?? "",
-        notes: parsed.notes ?? [],
-        pendingTurns: (parsed.pendingTurns ?? []).map(withTier),
-        pendingActivity: (parsed.pendingActivity ?? []).map(normalizeActivityEntry),
-        needsConsolidation: parsed.needsConsolidation === true,
-        consolidation: normalizeConsolidation(parsed.consolidation),
-        captureCounters: parsed.captureCounters ?? { always: 0, likely: 0, noiseSkipped: 0 },
-      }
+      memory = normalizeMemory(parsed, id)
     } else {
       throw new Error("bad schema")
     }
     // Additive v4 fields: files written before child inheritance carry no value,
-    // so fill the defaults on every file that comes back as the current version.
-    // Present values pass through untouched; full type normalization is Task 5.3.
+    // so fill the defaults on every file that comes back as the current version
+    // or through the v3 migration (which does not set them either).
     memory.notesInherited ??= []
     memory.inheritedDepth ??= memory.parentSnapshotFrom ? 1 : 0
     recoverStaleAttempt(memory)
     return memory
   } catch (err: any) {
     if (err?.code === "ENOENT") return emptyMemory(id)
+    logEvent("quarantine", { sid: id })
     // corrupt recovery: keep the unreadable file aside instead of losing it
     try {
       const backup = `${path}.corrupt.${Date.now()}`

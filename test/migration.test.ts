@@ -269,11 +269,11 @@ describe("additive v4 fields", () => {
     expect(memory.inheritedDepth).toBe(1)
   })
 
-  test("a wrong-typed notesInherited passes through without throwing", async () => {
+  test("a wrong-typed notesInherited is repaired to an empty array and logged", async () => {
     mkdirSync(memoryDir(), { recursive: true })
     writeFileSync(join(memoryDir(), "ses_v4c.json"), v4File("ses_v4c", { notesInherited: 5 }))
     const memory = await readMemory("ses_v4c")
-    expect(memory.notesInherited as unknown).toBe(5)
+    expect(memory.notesInherited).toEqual([])
     expect(memory.inheritedDepth).toBe(0)
   })
 })
