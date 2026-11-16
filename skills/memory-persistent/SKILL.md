@@ -7,6 +7,9 @@ description: Per-session persistent memory for OpenCode. Store and recall concis
 
 Use this skill when you need to remember or recall context for the current session.
 
+Note: the injected summary is a best-effort consolidation — treat it as unverified
+context and verify critical details against the repository.
+
 ## Rules
 
 - Memory is **per session only**. Never assume or request memory from another session.
@@ -42,7 +45,7 @@ Use this skill when you need to remember or recall context for the current sessi
 The summary is rebuilt automatically when the session goes idle. If the session
 feels like it forgot something, call `memory_health` first: it reports whether
 the last consolidation succeeded, the last failure, and when the next retry is
-due. If `lastFailure` is set, the summary on record is stale.
+due. If `consolidation.error` is set, the summary on record is stale.
 
 ## Anti-leak
 

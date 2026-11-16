@@ -29,6 +29,7 @@ Opsi plugin:
 | `tokenBudget` | `5000` | Batas token memori yang diinjeksikan ke konteks |
 | `sweepEnabled` | `true` | Aktifkan sweep file memori yatim |
 | `sweepIntervalMs` | `21600000` (6 jam) | Jarak antar sweep periodik |
+| `consolidationMode` | `stateless` | Mode panggilan konsolidasi: `stateless` (prompt dari delta saja, riwayat sesi tidak dikirim) atau `session` (riwayat sesi disertakan) |
 
 ## Lifecycle
 
@@ -39,7 +40,7 @@ Opsi plugin:
 | Setiap request | Memori diinjeksikan sebagai system part (maks `tokenBudget` token, default 5000) |
 | Sesi idle | Percakapan + activity dikonsolidasi: state `idle` → `running` → `idle` (sukses) atau `failed` (gagal) |
 | Konsolidasi berjalan > 5 menit tanpa selesai | Attempt dianggap mati, di-recover menjadi `failed` (consecutiveFailures++), lalu di-retry setelah backoff |
-| Konsolidasi gagal | State `failed`, error dicatat, retry dengan backoff 1→2→4→8→10 menit |
+| Konsolidasi gagal | State `failed`, error dicatat (di-redaksi), retry pada idle berikutnya setelah backoff 1→2→4→8→10 menit; batch naratif dilengkapi (turn pending tidak hilang) |
 | Konsolidasi sukses | State `idle`, `consecutiveFailures` = 0, `needsConsolidation` false bila tidak ada pending |
 | Sesi idle dengan background work aktif | Konsolidasi ditunda (defer) hingga 3 kali / 15 menit; ringkasan dapat bersifat parsial |
 | Sesi dibuat (child) | Mewarisi snapshot memori parent |
@@ -54,7 +55,7 @@ disimpan karena hanya mengaburkan percakapan.
 
 ## Anti-leak
 
-- `sessionID` selalu divalidasi (`[A-Za-z0-9_-]+`), path traversal ditolak.
+- `sessionID` selalu divalidasi (`[A-Za-z0-9_-]{1,128}`), path traversal ditolak.
 - Tool hanya bekerja pada sesi dari konteks eksekusi — `sessionID` tidak pernah diterima dari argumen.
 - Tidak ada tool untuk melihat sesi lain.
 - Child/fork hanya mewarisi snapshot saat pembuatan, lalu divergen; tidak ada sinkronisasi balik.
@@ -81,14 +82,14 @@ disimpan karena hanya mengaburkan percakapan.
 ## Schema
 
 - **Versi skema:** `4` (schema v4 dengan pemisahan facts warisan)
-- **Build catatan:** `build.json` mencatat `build: "0.5.0"` dan hash source; drift dilaporkan levia `memory_health`
+- **Build catatan:** `build.json` mencatat `build: "0.6.0"` dan hash source; drift dilaporkan via `memory_health`
 - **Label "unverified":** Narasi model ditandai sebagai "Notes (model-generated, unverified):" — tidak pernah dijadikan sumber fakta
 
 ## Facts vs Inherited Facts
 
-- `summaryFacts` : fakta deterministik milisession ini (file, command, error yang plugin catat sendiri)
-- `summaryFactsInherited` : fakta warisan dari sesi parent (diisi saat child/fork dibuat; format `"Inherited from parent session:\n<facts>"`)
-- Saat injeksi memori, faktanya ditempatkan sebelum narasi model; faktas tetap disimpan meskipun narasi gagal
+- `summaryFacts` : fakta deterministik sesi ini (file, command, error yang plugin catat sendiri)
+- `summaryFactsInherited` : baris fakta warisan dari sesi parent, disimpan **mentah** di file (diisi saat child/fork dibuat); label `"Inherited from parent session:"` ditambahkan saat **injeksi**, bukan tersimpan di file
+- Saat injeksi memori, faktanya ditempatkan sebelum narasi model; fakta tetap disimpan meskipun narasi gagal
 
 ## Capture Marker Split (EN / ID / Prefix)
 
@@ -98,7 +99,7 @@ Policy menangkap pakai tiga kelas marker (urutan prioritas):
 2. **Prefix** (tanpa batas kanan `\b`) — contoh: "analyz", "lanjut", "praq", "raq"
 3. **ID substring** — imbuhan Indonesia (di-, me-, ke-, -nya); cocok sebagai substring dalam kata ("disetujui", "perbaiki", dll.)
 
-Lainnya: panjang > 120 token → always; greetings → noise; pendek < 15 token → noise.
+Lainnya: panjang > 120 **karakter** → always; greetings → noise; pendek < 15 **karakter** → noise.
 
 ## Input Validation: `validateStoreInput`
 
@@ -112,14 +113,6 @@ Lainnya: panjang > 120 token → always; greetings → noise; pendek < 15 token 
 
 - Path dinamis: `resolveSkillPath()` menggunakan `import.meta.url` dan `dirname()` untuk menemukan `skills/memory-persistent/SKILL.md`
 - Tidak di-hardcode sebagai `/home/<user>/...` ⇒ plugin bisa dipasang di mana saja
-
-### Anti-leak
-
-- `sessionID` selalu divalidasi (`[A-Za-z0-9_-]+`), path traversal ditolak.
-- Tool hanya bekerja pada sesi dari konteks eksekusi — `sessionID` tidak pernah diterima dari argumen.
-- Tidak ada tool untuk melihat sesi lain.
-- Child/fork hanya mewarisi snapshot saat pembuatan, lalu divergen; tidak ada sinkronisasi balik.
-- Isi memori hanya ringkasan dan catatan; output mentah tool tidak disimpan.
 
 ## Skill
 
@@ -157,6 +150,30 @@ oleh `memory_health` (`logPath`).
 
 Permission `0600` untuk file, `0700` untuk direktori. Backup file yang gagal diparse berakhir dengan `.json.corrupt.<timestamp>`. Permission diperbaiki otomatis saat aktivasi (`repairPermissions`).
 
+## Measure
+
+`tools/measure.ts` adalah CLI **read-only** untuk melaporkan efektivitas tool: ia hanya
+membaca file memori dan mencetak JSON laporan — tidak ada angka yang direkayasa; laporan
+hanya memuat apa yang benar-benar dibaca dari file.
+
+```bash
+bun run tools/measure.ts <sessions-dir>
+```
+
+Kolom utama laporan (`MeasureReport`):
+
+| Kolom | Arti |
+|---|---|
+| `totalFiles` | Jumlah file memori yang dibaca |
+| `schemaVersions` | Distribusi versi skema (per field `version`, fallback `schema`) |
+| `builds` | Distribusi build yang menulis file |
+| `driftCount` | File yang terakhir ditulis oleh build selain build yang berjalan |
+| `facts.sessions` | File yang memuat ≥ 1 baris fakta |
+| `facts.ownLines` | Jumlah baris fakta milik sesi sendiri |
+| `facts.inheritedLines` | Jumlah baris fakta warisan dari parent |
+| `facts.genericPct` | Persentase baris fakta berbentuk `- <kind>: <target>` dengan kind yang dikenal |
+| `facts.dupLines` | Kemunculan ekstra baris fakta yang terduplikasi |
+
 ## Pengembangan
 
 ```bash
@@ -164,3 +181,14 @@ bun install
 bun test
 bunx tsc --noEmit
 ```
+
+## Limitations
+
+- Redaksi secret bersifat **best-effort** (heuristik, bukan jaminan).
+- Kutipan turn parent tidak diwarisi dalam snapshot child/fork (hanya ringkasan + notes).
+- Label depth baris fakta warisan default `"parent"` (depth 1); untuk depth > 1 dirender
+  `Inherited from N earlier sessions:` — depth tersimpan per blok warisan (satu angka),
+  bukan per baris.
+- Rantai inherited tumbuh di file; cap dilakukan saat injeksi (budget token).
+- File sesi yang sudah dihapus dapat muncul kembali maksimal 1 sweep bila
+  tombstone-nya ter-evict dari cap 256.
