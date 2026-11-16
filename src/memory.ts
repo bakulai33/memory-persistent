@@ -525,12 +525,27 @@ export function applyDelta(m: MemoryFile, delta: Delta, narrative: string, budge
   if (m.consolidation.attemptId !== delta.attemptId) return
   // Narrative content is always redacted at rest, on every branch (redact("") === "").
   narrative = redact(narrative)
-  const turnSet = new Set(delta.turnIds)
   const activitySet = new Set(delta.activityIds)
-  m.pendingTurns = m.pendingTurns.filter((t) => !turnSet.has(t.turnId))
   m.pendingActivity = m.pendingActivity.filter((a) => !activitySet.has(a.id))
   const factsBudget = Math.floor((Number.isFinite(budget) ? Math.max(0, Math.floor(budget)) : 0) * FACTS_BUDGET_SHARE)
+  // Facts are merged exactly once per applyDelta call, whichever branch runs, so
+  // a retry after a failed attempt never re-counts the same activity.
   m.summaryFacts = truncateFacts(mergeFacts(m.summaryFacts, buildFacts(delta)), factsBudget)
+  if (narrative.trim() === "") {
+    // Failed attempt: the model produced no narrative. Keep the pending turns so
+    // the retry sees the same conversation, split against the PREVIOUS narrative
+    // instead of clobbering it with "", and leave needsConsolidation on so the
+    // scheduler retries after backoff. consolidatedNotes stays as-is (the notes
+    // were not consolidated by this attempt) and the clearing block does not run.
+    const prevNarrative = m.summaryNarrative
+    const split = splitSummary(m.summaryFacts, prevNarrative, budget)
+    m.summaryNarrative = split.narrative
+    m.summary = split.summary
+    m.needsConsolidation = true
+    return
+  }
+  const turnSet = new Set(delta.turnIds)
+  m.pendingTurns = m.pendingTurns.filter((t) => !turnSet.has(t.turnId))
   const split = splitSummary(m.summaryFacts, narrative, budget)
   m.summaryNarrative = split.narrative
   m.summary = split.summary

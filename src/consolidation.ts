@@ -90,6 +90,9 @@ export function finishFailure(m: MemoryFile, attemptId: string, error: string, n
   c.error = redact(String(error)).slice(0, 200)
   if (!Number.isFinite(c.consecutiveFailures)) c.consecutiveFailures = 0
   c.consecutiveFailures += 1
+  // A failed attempt must keep the pending work visible: the flag stays on so
+  // the scheduler retries after backoff instead of dropping the turns.
+  m.needsConsolidation = true
   return true
 }
 
