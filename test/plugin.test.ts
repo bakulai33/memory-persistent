@@ -168,6 +168,9 @@ describe("plugin (tools, hooks, events)", () => {
     const m = emptyMemory("ses_recall")
     appendNote(m, "alpha probe note", ["a"], "manual")
     appendNote(m, "beta other note", ["b"], "manual")
+    m.notesInherited = [
+      { id: "i1", text: "gamma inherited note", tags: [], createdAt: new Date().toISOString(), source: "manual" },
+    ]
     m.summaryFacts = "- file: src/x.ts"
     m.summaryNarrative = "narrative"
     addPendingTurn(m, { turnId: "t1", messageID: "m1", userExcerpt: "quote", createdAt: "", tier: "likely" })
@@ -179,10 +182,19 @@ describe("plugin (tools, hooks, events)", () => {
     expect(all.summaryNarrativeVerified).toBe(false)
     expect(all.notes).toHaveLength(2)
     expect(all.injection).toContain("src/x.ts")
+    // catatan warisan dikembalikan terpisah, tanpa tercampur ke notes own
+    expect(all.notesInherited).toHaveLength(1)
+    expect(all.notesInherited[0].text).toContain("gamma")
+    expect(all.notes.map((n: any) => n.text)).toEqual(["alpha probe note", "beta other note"])
 
     const filtered = JSON.parse(((await Effect.runPromise(recall.execute({ query: "alpha" }, { sessionID: "ses_recall" }))) as { content: { text: string }[] }).content[0]!.text)
     expect(filtered.notes).toHaveLength(1)
     expect(filtered.notes[0]!.text).toContain("alpha")
+    // filter query yang sama diterapkan ke inherited
+    expect(filtered.notesInherited).toHaveLength(0)
+    const filteredInh = JSON.parse(((await Effect.runPromise(recall.execute({ query: "gamma" }, { sessionID: "ses_recall" }))) as { content: { text: string }[] }).content[0]!.text)
+    expect(filteredInh.notesInherited).toHaveLength(1)
+    expect(filteredInh.notesInherited[0].text).toContain("gamma inherited")
   })
 
   test("memory_list returns the notes array", async () => {

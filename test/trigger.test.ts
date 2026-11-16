@@ -81,4 +81,18 @@ describe("trigger (delta threshold)", () => {
     m.consolidation.consolidatedNotes = 1
     expect(countNewNotes(m)).toBe(1)
   })
+
+  // Regression pin (GREEN sejak RED): countNewNotes sudah own-only; catatan
+  // warisan tidak boleh dihitung maupun memicu konsolidasi.
+  test("countNewNotes mengabaikan inherited (0 own + 3 inherited → 0)", () => {
+    const m = emptyMemory("s8")
+    m.needsConsolidation = true
+    m.notesInherited = [
+      { id: "i1", text: "a", tags: [], createdAt: new Date().toISOString(), source: "manual" },
+      { id: "i2", text: "b", tags: [], createdAt: new Date().toISOString(), source: "manual" },
+      { id: "i3", text: "c", tags: [], createdAt: new Date().toISOString(), source: "manual" },
+    ]
+    expect(countNewNotes(m)).toBe(0)
+    expect(shouldConsolidate(m)).toBe(false)
+  })
 })

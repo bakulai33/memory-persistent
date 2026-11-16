@@ -20,7 +20,7 @@ import {
   finishSuccess,
   finishFailure,
 } from "../src/consolidation"
-import { emptyMemory, addActivity, type PendingTurn, writeMemory, readMemory, updateMemory } from "../src/storage"
+import { emptyMemory, addActivity, type PendingTurn, type MemoryNote, writeMemory, readMemory, updateMemory } from "../src/storage"
 import { copyMemory } from "../src/memory"
 import { defaultTokenCounter } from "../src/tokenizer"
 
@@ -29,6 +29,15 @@ const turn = (id: string, excerpt: string): PendingTurn => ({
   messageID: id,
   userExcerpt: excerpt,
   createdAt: new Date().toISOString(),
+})
+
+/** Catatan warisan sintetis (bentuk sama seperti snapshot parent di buildSnapshot). */
+const inheritedNote = (id: string, text: string): MemoryNote => ({
+  id,
+  text,
+  tags: [],
+  createdAt: new Date().toISOString(),
+  source: "manual",
 })
 
 describe("memory", () => {
@@ -86,6 +95,27 @@ describe("memory", () => {
     const out = buildInjection(child, 5000)
     expect(out).toContain("Inherited from parent session:")
     expect(out).toContain("bun test")
+  })
+
+  test("injeksiSeksiNotes: own dulu lalu blok inherited berlabel", () => {
+    const m = emptyMemory("s_notes")
+    appendNote(m, "own decision")
+    appendNote(m, "second own")
+    m.notesInherited = [inheritedNote("i1", "inherited one"), inheritedNote("i2", "inherited two")]
+    const out = buildInjection(m, 5000)
+    // satu seksi: header Manual notes, own lines, lalu sub-label exact
+    expect(out).toContain("Manual notes:\n- own decision\n- second own\nManual notes (inherited):\n- inherited one\n- inherited two")
+    // own sebelum inherited
+    expect(out.indexOf("- own decision")).toBeLessThan(out.indexOf("Manual notes (inherited):"))
+    // urut tersimpan
+    expect(out.indexOf("- inherited one")).toBeLessThan(out.indexOf("- inherited two"))
+  })
+
+  test("injeksiSeksiNotes: header Manual notes tetap saat hanya inherited", () => {
+    const m = emptyMemory("s_notes2")
+    m.notesInherited = [inheritedNote("i1", "inherited only")]
+    const out = buildInjection(m, 5000)
+    expect(out).toContain("Manual notes:\nManual notes (inherited):\n- inherited only")
   })
 
   test("copyMemory waits for an in-flight parent update before reading (I5)", async () => {

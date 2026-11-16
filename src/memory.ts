@@ -129,8 +129,13 @@ export function buildInjection(memory: MemoryFile, budget = 5000): string {
   const conversation = memory.pendingTurns.length
     ? `Conversation:\n${memory.pendingTurns.map((t) => `- ${t.userExcerpt}`).join("\n")}`
     : ""
-  const notes = memory.notes.length
-    ? `Manual notes:\n${memory.notes.map((n) => `- ${n.text}`).join("\n")}`
+  // Seksi notes TUNGGAL: own lines dulu, lalu blok inherited berlabel.
+  // Truncation keep-head per seksi (cap 0.15) memotong inherited lebih dulu,
+  // jadi own menang secara alami tanpa aritmetika budget baru.
+  const ownNoteLines = memory.notes.map((n) => `- ${n.text}`)
+  const inheritedNoteLines = (memory.notesInherited ?? []).map((n) => `- ${n.text}`)
+  const notes = ownNoteLines.length || inheritedNoteLines.length
+    ? ["Manual notes:", ...ownNoteLines, ...(inheritedNoteLines.length ? ["Manual notes (inherited):", ...inheritedNoteLines] : [])].join("\n")
     : ""
   const activity = memory.pendingActivity.length
     ? `Activity:\n${memory.pendingActivity.map((a) => `- ${a.kind}: ${a.target}${a.count > 1 ? ` (${a.count}x)` : ""}`).join("\n")}`
@@ -168,14 +173,20 @@ export function buildRecallPayload(
   summaryNarrative: string
   summaryNarrativeVerified: boolean
   notes: MemoryFile["notes"]
+  notesInherited: MemoryFile["notes"]
   pendingTurns: string[]
   injection: string
 } {
   const injection = buildInjection(memory, budget)
-  let notes = memory.notes
+  // Predicate filter yang sama untuk own dan inherited agar recall konsisten.
+  const matchesQuery = (n: { text: string; tags: string[] }, q: string) =>
+    n.text.toLowerCase().includes(q) || n.tags.some((t) => t.toLowerCase().includes(q))
+  let notes: MemoryFile["notes"] = memory.notes
+  let notesInherited: MemoryFile["notes"] = memory.notesInherited ?? []
   if (query) {
     const q = String(query).toLowerCase()
-    notes = notes.filter((n) => n.text.toLowerCase().includes(q) || n.tags.some((t) => t.toLowerCase().includes(q)))
+    notes = notes.filter((n) => matchesQuery(n, q))
+    notesInherited = notesInherited.filter((n) => matchesQuery(n, q))
   }
   return {
     summary: memory.summary,
@@ -184,6 +195,7 @@ export function buildRecallPayload(
     summaryNarrative: memory.summaryNarrative,
     summaryNarrativeVerified: false,
     notes,
+    notesInherited,
     pendingTurns: memory.pendingTurns.map((t) => t.userExcerpt),
     injection,
   }
