@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test"
 import { readFileSync, existsSync } from "node:fs"
 import { join } from "node:path"
+import { BUILD } from "../src/build"
 
 const ROOT = join(import.meta.dir, "..")
 const FILES = ["src/index.ts", "src/build.ts"]
@@ -51,7 +52,16 @@ describe("export contract", () => {
       if (missing.length > 0) {
         throw new Error(`Export yang hilang: ${missing.join(", ")}`)
       }
+      const extra = actual.filter((name) => !expected.includes(name))
+      if (extra.length > 0) {
+        throw new Error(`Export tak terduga: ${extra.join(", ")}`)
+      }
     }
+  })
+
+  test("BUILD matches package.json version", () => {
+    const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version: string }
+    expect(BUILD).toBe(pkg.version)
   })
 
   test("reports missing public exports", () => {

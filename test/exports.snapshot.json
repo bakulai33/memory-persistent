@@ -1,6 +1,7 @@
 {
   "src/index.ts": [
-    "default"
+    "default",
+    "resolveSkillPath"
   ],
   "src/build.ts": [
     "BUILD",

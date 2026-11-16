@@ -436,7 +436,7 @@ describe("the memory_health tool", () => {
       "logPath",
     ])
     expect(report.pending).toEqual({ turns: 1, activity: 0, notes: 0 })
-    expect(report.build).toBe("0.5.0")
+    expect(report.build).toBe("0.6.0")
     expect(report.sourceTreeOk).toBe(true)
     expect(report.sourceHash.length).toBeGreaterThan(0)
     expect(report.capture).toEqual({ always: 0, likely: 0, noiseSkipped: 0 })

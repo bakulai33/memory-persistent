@@ -79,8 +79,8 @@ describe("buildMeasureReport", () => {
     expect(report.totalFiles).toBe(2)
     expect(report.schemaVersions).toEqual({ 3: 1, 4: 1 })
     expect(report.builds).toEqual({ "0.4.0": 1, "0.5.0": 1 })
-    // fixture-beta was written by another build than the running plugin.
-    expect(report.driftCount).toBe(1)
+    // Both fixtures were written by builds other than the running plugin (0.6.0).
+    expect(report.driftCount).toBe(2)
 
     // Both fields feed the facts section: alpha owns 3 lines, alpha inherits
     // 2, beta inherits 1. Six fact lines in total, five of them generic.

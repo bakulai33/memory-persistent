@@ -77,7 +77,6 @@ export interface HealthRuntime {
 const SESSION_LIMIT = 256
 
 interface SessionState {
-  capture: CaptureCounters
   lastConsolidation: LastConsolidation | null
 }
 
@@ -89,14 +88,10 @@ const driftLogged = new Map<string, string>()
 
 let runtime: HealthRuntime = { build: BUILD, sourceHash: "", sourceTreeOk: true }
 
-function emptyCounters(): CaptureCounters {
-  return { always: 0, likely: 0, noiseSkipped: 0 }
-}
-
 function stateFor(sessionID: string): SessionState {
   let state = sessions.get(sessionID)
   if (!state) {
-    state = { capture: emptyCounters(), lastConsolidation: null }
+    state = { lastConsolidation: null }
     sessions.set(sessionID, state)
     while (sessions.size > SESSION_LIMIT) {
       const oldest = sessions.keys().next()
