@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rename, rm, writeFile, chmod } from "node:fs/promises"
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile, chmod } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { homedir } from "node:os"
 import { randomUUID } from "node:crypto"
@@ -529,6 +529,10 @@ function isPrivateFile(name: string): boolean {
 }
 
 /** Lists the memory files on disk, including the corrupt backups that a failed parse left behind. */
+
+/** A tmp file older than this is a leftover from a crashed atomic write, not an in-flight one. */
+const TMP_MAX_AGE_MS = 3600_000
+
 export async function repairPermissions(dir?: string): Promise<{ files: number; dirs: number }> {
   const target = dir ?? join(dataRoot(), "memory-persistent")
   let files = 0
@@ -561,6 +565,14 @@ export async function repairPermissions(dir?: string): Promise<{ files: number; 
         try {
           await chmod(full, 0o600)
           files += 1
+        } catch {}
+      } else if (entry.isFile() && entry.name.includes(".tmp.")) {
+        // A leftover from a crashed atomic write: remove it once it is old
+        // enough not to be an in-flight write. It is not a private file, so
+        // the counts stay unchanged.
+        try {
+          const stats = await stat(full)
+          if (Date.now() - stats.mtimeMs > TMP_MAX_AGE_MS) await rm(full, { force: true })
         } catch {}
       }
     }

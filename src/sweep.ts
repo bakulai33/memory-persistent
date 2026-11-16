@@ -51,17 +51,22 @@ export const listAllSessionIDs = (
 /**
  * Removes the memory files of sessions that no longer exist. Deleting nothing is the
  * correct outcome whenever the session list cannot be read completely.
+ *
+ * The file listing runs FIRST: files are the deletion targets, so they are
+ * enumerated before the session list is read. A file created after the file
+ * listing is never a target, even though the session page it is compared
+ * against is already stale by then.
  */
 export const sweep = (options: SweepOptions): Effect.Effect<SweepResult> =>
   Effect.gen(function* () {
+    const files: Exit.Exit<readonly MemoryFileEntry[], unknown> = yield* options.listFiles().pipe(Effect.exit)
+    if (Exit.isFailure(files)) return { deleted: [], incomplete: true }
+
     const ids = yield* listAllSessionIDs(options.listSessions, {
       limit: options.limit,
       maxPages: options.maxPages,
     })
     if (ids === null) return { deleted: [], incomplete: true }
-
-    const files: Exit.Exit<readonly MemoryFileEntry[], unknown> = yield* options.listFiles().pipe(Effect.exit)
-    if (Exit.isFailure(files)) return { deleted: [], incomplete: true }
 
     const live = new Set(ids)
     const orphans = new Set<string>()

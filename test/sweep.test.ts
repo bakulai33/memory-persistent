@@ -79,6 +79,35 @@ describe("sweep", () => {
     expect(deleted).toEqual(["ses_dead"])
   })
 
+  test("deletes only files listed before the session list is read", async () => {
+    // Files are the deletion targets, so they must be enumerated first. A file
+    // that appears on disk while the session list is being read (ses_late,
+    // pushed by the lister below) is newer than the stale session page and
+    // must never become a deletion target.
+    const listed: MemoryFileEntry[] = [{ id: "ses_dead", kind: "memory", file: "ses_dead.json" }]
+    const deleted: string[] = []
+
+    const result = await Effect.runPromise(
+      sweep({
+        // Returns a stale page that does not include ses_late, which appears
+        // on disk only while the session list is being read.
+        listSessions: () => {
+          listed.push({ id: "ses_late", kind: "memory" as const, file: "ses_late.json" })
+          return Effect.succeed(page([]))
+        },
+        listFiles: () => Effect.succeed([...listed]),
+        deleteFiles: (id) =>
+          Effect.sync(() => {
+            deleted.push(id)
+          }),
+      }),
+    )
+
+    expect(result.incomplete).toBe(false)
+    expect(deleted).toEqual(["ses_dead"])
+    expect(result.deleted).toEqual(["ses_dead"])
+  })
+
   test("deletes nothing when the session list cannot be read", async () => {
     const deleted: string[] = []
 

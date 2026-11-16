@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test"
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, chmodSync, statSync } from "node:fs"
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, chmodSync, statSync, utimesSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { repairPermissions, writeMemory, emptyMemory } from "../src/storage"
@@ -100,6 +100,32 @@ describe("permissions", () => {
   test("repairPermissions tolerates a missing directory", async () => {
     const res = await repairPermissions(join(dir, "does-not-exist"))
     expect(res).toEqual({ files: 0, dirs: 0 })
+  })
+
+  test("repairPermissions removes an old tmp file but keeps a fresh one", async () => {
+    const root = join(dir, "opencode", "memory-persistent")
+    const sessions = join(root, "sessions")
+    mkdirSync(sessions, { recursive: true })
+
+    const session = join(sessions, "ses_live.json")
+    writeFileSync(session, "{}")
+
+    const stale = join(sessions, "ses_x.json.tmp.123.456.abc")
+    writeFileSync(stale, "partial")
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600_000)
+    utimesSync(stale, twoHoursAgo, twoHoursAgo)
+
+    const fresh = join(sessions, "ses_y.json.tmp.999.888.ghi")
+    writeFileSync(fresh, "partial")
+    const oneMinuteAgo = new Date(Date.now() - 60_000)
+    utimesSync(fresh, oneMinuteAgo, oneMinuteAgo)
+
+    const res = await repairPermissions()
+    // Tmp files are not private files, so the counts stay stable.
+    expect(res.files).toBe(1)
+    expect(existsSync(session)).toBe(true)
+    expect(existsSync(stale)).toBe(false)
+    expect(existsSync(fresh)).toBe(true)
   })
 
   test("writeMemory produces 0600", async () => {
