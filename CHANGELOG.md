@@ -38,4 +38,4 @@
 ### Notes
 
 - Consolidation retry is idle-driven: it is scheduled on the next idle event after backoff (1→2→4→8→10 minutes); there is no standalone timer.
-- Known upstream issue: <URL>
+- Known upstream issue: https://github.com/anomalyco/opencode/issues/64366
