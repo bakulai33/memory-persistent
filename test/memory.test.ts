@@ -8,9 +8,11 @@ import {
   removeNote,
   buildInjection,
   buildRecallPayload,
+  buildListPayload,
   buildConsolidationInput,
   allocate,
   validateStoreInput,
+  PAYLOAD_CAP_BYTES,
 } from "../src/memory"
 import {
   canConsolidate,
@@ -296,6 +298,52 @@ describe("memory", () => {
     const payload = buildRecallPayload(m, 5000)
     expect(payload.summaryNarrativeVerified).toBe(false)
     expect(payload.injection).toContain("unverified")
+  })
+
+  test("recallPayload 200x8KB <= 32KB, truncated, totalNotes, preview 500", () => {
+    const m = emptyMemory("ses_paybig")
+    for (let i = 0; i < 200; i++) {
+      m.notes.push({ id: `n${i}`, text: `note ${i} ${"x".repeat(8000)}`, tags: [], createdAt: "", source: "manual" })
+    }
+    const payload = buildRecallPayload(m, 5000)
+    const json = JSON.stringify(payload)
+    expect(json.length).toBeLessThanOrEqual(PAYLOAD_CAP_BYTES)
+    expect(payload.truncated).toBe(true)
+    expect(payload.totalNotes).toBe(200)
+    expect(payload.notes[0]!.text.length).toBeLessThanOrEqual(500)
+  })
+
+  test("recallPayload note pendek tetap utuh dan tidak truncated", () => {
+    const m = emptyMemory("ses_payshort")
+    appendNote(m, "catatan pendek", [], "manual")
+    const payload = buildRecallPayload(m, 5000)
+    expect(payload.notes[0]!.text).toBe("catatan pendek")
+    expect(payload.truncated).toBe(false)
+    expect(payload.totalNotes).toBe(1)
+  })
+
+  test("listPayload 200x8KB <= 32KB, truncated, totalNotes, preview", () => {
+    const m = emptyMemory("ses_listbig")
+    for (let i = 0; i < 200; i++) {
+      m.notes.push({ id: `n${i}`, text: `note ${i} ${"y".repeat(8000)}`, tags: [], createdAt: "", source: "manual" })
+    }
+    const payload = buildListPayload(m)
+    const json = JSON.stringify(payload)
+    expect(json.length).toBeLessThanOrEqual(PAYLOAD_CAP_BYTES)
+    expect(payload.truncated).toBe(true)
+    expect(payload.totalNotes).toBe(200)
+    expect(payload.notes[0]!.preview.length).toBeLessThanOrEqual(500)
+    expect(Object.keys(payload.notes[0]!).sort()).toEqual(["id", "preview", "tags"])
+  })
+
+  test("listPayload note pendek tetap utuh", () => {
+    const m = emptyMemory("ses_listshort")
+    appendNote(m, "n1", ["x"], "manual")
+    appendNote(m, "n2", [], "manual")
+    const payload = buildListPayload(m)
+    expect(payload.notes.map((n: any) => n.preview)).toEqual(["n1", "n2"])
+    expect(payload.truncated).toBe(false)
+    expect(payload.totalNotes).toBe(2)
   })
 
   test("storeMenolakTeksKosong", () => {

@@ -12,7 +12,7 @@ import { dirname, join } from "node:path"
 import { Effect, Stream } from "effect"
 import plugin from "../src/index"
 import { emptyMemory, writeMemory, readMemory, memoryDir, buildInfoPath, updateMemory } from "../src/storage"
-import { appendNote, addPendingTurn } from "../src/memory"
+import { appendNote, addPendingTurn, PAYLOAD_CAP_BYTES } from "../src/memory"
 
 describe("plugin (tools, hooks, events)", () => {
   let dir: string
@@ -198,18 +198,22 @@ describe("plugin (tools, hooks, events)", () => {
     expect(all.notesInherited).toHaveLength(1)
     expect(all.notesInherited[0].text).toContain("gamma")
     expect(all.notes.map((n: any) => n.text)).toEqual(["alpha probe note", "beta other note"])
+    expect(all.truncated).toBe(false)
+    expect(all.totalNotes).toBe(3)
 
     const filtered = JSON.parse(((await Effect.runPromise(recall.execute({ query: "alpha" }, { sessionID: "ses_recall" }))) as { content: { text: string }[] }).content[0]!.text)
     expect(filtered.notes).toHaveLength(1)
     expect(filtered.notes[0]!.text).toContain("alpha")
+    expect(filtered.totalNotes).toBe(1)
     // filter query yang sama diterapkan ke inherited
     expect(filtered.notesInherited).toHaveLength(0)
     const filteredInh = JSON.parse(((await Effect.runPromise(recall.execute({ query: "gamma" }, { sessionID: "ses_recall" }))) as { content: { text: string }[] }).content[0]!.text)
     expect(filteredInh.notesInherited).toHaveLength(1)
+    expect(filteredInh.totalNotes).toBe(1)
     expect(filteredInh.notesInherited[0].text).toContain("gamma inherited")
   })
 
-  test("memory_list returns the notes array", async () => {
+  test("memory_list returns the bounded list payload", async () => {
     const { ctx, tools } = mockContext("ses_list")
     await activate(ctx)
     const m = emptyMemory("ses_list")
@@ -217,7 +221,26 @@ describe("plugin (tools, hooks, events)", () => {
     appendNote(m, "n2", ["x"], "manual")
     await writeMemory("ses_list", m)
     const list = JSON.parse(((await Effect.runPromise(tools.get("memory_list")!.execute({}, { sessionID: "ses_list" }))) as { content: { text: string }[] }).content[0]!.text)
-    expect(list.map((n: any) => n.text)).toEqual(["n1", "n2"])
+    expect(list.notes.map((n: any) => n.preview)).toEqual(["n1", "n2"])
+    expect(list.truncated).toBe(false)
+    expect(list.totalNotes).toBe(2)
+  })
+
+  test("memory_recall payload stays bounded for a huge note and keeps the full text on disk", async () => {
+    const { ctx, tools } = mockContext("ses_paybound")
+    await activate(ctx)
+    const m = emptyMemory("ses_paybound")
+    appendNote(m, `HUGE-HEAD ${"y".repeat(8000)}`, [], "manual")
+    await writeMemory("ses_paybound", m)
+    const recall = tools.get("memory_recall")!
+    const raw = ((await Effect.runPromise(recall.execute({}, { sessionID: "ses_paybound" }))) as { content: { text: string }[] }).content[0]!.text
+    expect(raw.length).toBeLessThanOrEqual(PAYLOAD_CAP_BYTES)
+    const payload = JSON.parse(raw)
+    expect(payload.truncated).toBe(true)
+    expect(payload.totalNotes).toBe(1)
+    expect(payload.notes[0].text.length).toBeLessThanOrEqual(500)
+    // teks lengkap tetap tersimpan di file memory
+    expect((await readMemory("ses_paybound")).notes[0]!.text).toContain("y".repeat(600))
   })
 
   // ---------------------------------------------------------------- hooks: prompt

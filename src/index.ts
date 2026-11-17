@@ -18,6 +18,7 @@ import {
   buildConsolidationPrompt,
   buildInjection,
   buildRecallPayload,
+  buildListPayload,
   copyMemory,
   collectDelta,
   applyDelta,
@@ -214,7 +215,7 @@ export default define({
           Effect.promise(async () => {
             const sessionID = sanitizeSessionID(context.sessionID)
             const memory = await loadMemory(sessionID)
-            return textResult(JSON.stringify(memory.notes, null, 2))
+            return textResult(JSON.stringify(buildListPayload(memory), null, 2))
           }),
       })
 

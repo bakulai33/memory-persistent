@@ -227,10 +227,63 @@ export function buildInjection(memory: MemoryFile, budget = 5000): string {
   return out
 }
 
+/** Tool payloads (memory_recall / memory_list) never exceed this size, so a
+ * runaway memory file cannot blow up the model's tool result. */
+export const PAYLOAD_CAP_BYTES = 32 * 1024
+
+/** Shrinks a payload object until its JSON fits `PAYLOAD_CAP_BYTES`: the
+ * redundant injection preview is char-capped first (the context hook already
+ * carries the same content), then turn/inherited/own tails are dropped, and
+ * finally the summary string fields are capped. Returns whether anything was
+ * cut so callers can surface `truncated`. */
+function fitPayload(payload: {
+  injection: string
+  pendingTurns: string[]
+  notes: unknown[]
+  notesInherited: unknown[]
+  summary: string
+  summaryFacts: string
+  summaryFactsInherited: string
+  summaryNarrative: string
+}): boolean {
+  let truncated = false
+  const size = () => JSON.stringify(payload).length
+  if (size() > PAYLOAD_CAP_BYTES) {
+    const others = size() - payload.injection.length
+    const allowed = PAYLOAD_CAP_BYTES - others
+    if (payload.injection.length > Math.max(0, allowed)) {
+      payload.injection = capTextByChars(payload.injection, Math.max(0, allowed), "head")
+      truncated = true
+    }
+  }
+  while (size() > PAYLOAD_CAP_BYTES && payload.pendingTurns.length) {
+    payload.pendingTurns = payload.pendingTurns.slice(0, -1)
+    truncated = true
+  }
+  while (size() > PAYLOAD_CAP_BYTES && payload.notesInherited.length) {
+    payload.notesInherited = payload.notesInherited.slice(0, -1)
+    truncated = true
+  }
+  while (size() > PAYLOAD_CAP_BYTES && payload.notes.length) {
+    payload.notes = payload.notes.slice(0, -1)
+    truncated = true
+  }
+  if (size() > PAYLOAD_CAP_BYTES) {
+    for (const key of ["summary", "summaryFacts", "summaryFactsInherited", "summaryNarrative"] as const) {
+      if (payload[key].length > 1000) {
+        payload[key] = capTextByChars(payload[key], 1000, "head")
+        truncated = true
+      }
+    }
+  }
+  return truncated
+}
+
 /**
  * Builds the payload returned by `memory_recall`, keeping the pure assembly logic
  * testable without the plugin loader. Facts are reported as stored: `summaryFacts`
  * holds this session's own facts, `summaryFactsInherited` the parent's facts.
+ * Note text is a bounded preview; the full text only lives in the memory file.
  */
 export function buildRecallPayload(
   memory: MemoryFile,
@@ -245,6 +298,8 @@ export function buildRecallPayload(
   notes: MemoryFile["notes"]
   notesInherited: MemoryFile["notes"]
   pendingTurns: string[]
+  truncated: boolean
+  totalNotes: number
   injection: string
 } {
   const injection = buildInjection(memory, budget)
@@ -258,17 +313,42 @@ export function buildRecallPayload(
     notes = notes.filter((n) => matchesQuery(n, q))
     notesInherited = notesInherited.filter((n) => matchesQuery(n, q))
   }
-  return {
+  const totalNotes = notes.length + notesInherited.length
+  const previewed = (list: MemoryFile["notes"]) => list.some((n) => n.text !== previewNote(n.text))
+  const payload = {
     summary: memory.summary,
     summaryFacts: memory.summaryFacts,
     summaryFactsInherited: memory.summaryFactsInherited,
     summaryNarrative: memory.summaryNarrative,
     summaryNarrativeVerified: false,
-    notes,
-    notesInherited,
+    notes: notes.map((n) => ({ ...n, text: previewNote(n.text) })),
+    notesInherited: notesInherited.map((n) => ({ ...n, text: previewNote(n.text) })),
     pendingTurns: memory.pendingTurns.map((t) => t.userExcerpt),
+    truncated: false,
+    totalNotes,
     injection,
   }
+  if (fitPayload(payload) || previewed(notes) || previewed(notesInherited)) payload.truncated = true
+  return payload
+}
+
+/**
+ * Builds the compact payload returned by `memory_list`: `{id, tags, preview}`
+ * per note, bounded by `PAYLOAD_CAP_BYTES`, with `truncated`/`totalNotes`.
+ */
+export function buildListPayload(memory: MemoryFile): {
+  notes: { id: string; tags: string[]; preview: string }[]
+  truncated: boolean
+  totalNotes: number
+} {
+  let notes = memory.notes.map((n) => ({ id: n.id, tags: n.tags, preview: previewNote(n.text) }))
+  let truncated = notes.some((n, i) => n.preview !== memory.notes[i]!.text)
+  const totalNotes = notes.length
+  while (JSON.stringify({ notes, truncated, totalNotes }).length > PAYLOAD_CAP_BYTES && notes.length) {
+    notes = notes.slice(0, -1)
+    truncated = true
+  }
+  return { notes, truncated, totalNotes }
 }
 
 /** Cuts at a line boundary so a decision is never cut in half. */
