@@ -78,6 +78,10 @@ export function finishSuccess(m: MemoryFile, attemptId: string, now: number = Da
   c.error = null
   c.consecutiveFailures = 0
   c.consolidatedNotes = m.notes.length
+  // Success refills the deferral budget: the next background burst defers
+  // again from zero instead of falling back forever (P1-1).
+  c.deferrals = 0
+  c.deferredSince = null
   return true
 }
 

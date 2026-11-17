@@ -12,6 +12,7 @@ import { Effect, Queue, Stream } from "effect"
 import plugin from "../src/index"
 import { emptyMemory, writeMemory, readMemory } from "../src/storage"
 import { addPendingTurn } from "../src/memory"
+import { beginAttempt, deltaAttemptId, finishFailure, finishSuccess, noteDeferral, shouldDefer } from "../src/consolidation"
 
 describe("idle background (T1.3)", () => {
   let dir: string
@@ -227,5 +228,32 @@ describe("idle background (T1.3)", () => {
       await new Promise((r) => setTimeout(r, 50))
       expect(listCalls).toBe(2)
     })
+  })
+})
+
+describe("deferral budget reset (T2.1)", () => {
+  test("finishSuccess resets the deferral budget", () => {
+    const m = emptyMemory("ses_defr_ok")
+    for (let i = 0; i < 3; i++) noteDeferral(m)
+    expect(m.consolidation.deferrals).toBe(3)
+    const attempt = deltaAttemptId()
+    beginAttempt(m, attempt)
+    expect(finishSuccess(m, attempt)).toBe(true)
+    // A successful consolidation starts a FRESH deferral budget: the next
+    // background burst defers again instead of falling back forever.
+    expect(m.consolidation.deferrals).toBe(0)
+    expect(m.consolidation.deferredSince).toBeNull()
+    expect(shouldDefer(m, 1)).toBe(true)
+  })
+
+  test("finishFailure keeps the deferral budget", () => {
+    const m = emptyMemory("ses_defr_fail")
+    noteDeferral(m)
+    noteDeferral(m)
+    const attempt = deltaAttemptId()
+    beginAttempt(m, attempt)
+    finishFailure(m, attempt, "boom")
+    // A failed attempt must not refill the budget the session spent.
+    expect(m.consolidation.deferrals).toBe(2)
   })
 })
