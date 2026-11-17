@@ -1,6 +1,6 @@
 import { define } from "@opencode/plugin/effect/plugin"
 import type { Context } from "@opencode/plugin/effect/plugin"
-import { Cause, Effect, Exit, Schema, Stream } from "effect"
+import { Brand, Cause, Effect, Exit, FiberMap, Schema, Stream } from "effect"
 import {
   addActivity,
   buildInfoPath,
@@ -398,30 +398,18 @@ export default define({
       yield* Effect.forkScoped(runSweep, { startImmediately: true })
     }
 
-    // Hook: idle (consolidation + periodic sweep)
-    yield* ctx.session.hook("experimental.idle", (event: any) =>
+    // Background fibers: one consolidation per session + the periodic sweep.
+    // The hook returns immediately; fibers are interrupted when the plugin
+    // scope closes (FiberMap.make is scoped).
+    const background = yield* FiberMap.make<string>()
+
+    /** Branded session id as the host's session API expects it. */
+    type SessionId = string & Brand.Brand<"SessionID">
+
+    /** The full consolidation pipeline for one session, run inside the
+     * FiberMap so the idle hook never waits on the model. */
+    const consolidationFor = (sessionID: SessionId, backgroundCount: number) =>
       Effect.gen(function* () {
-        const sessionID = sanitizeSessionID(event.sessionID)
-        const backgroundCount = event.background?.length ?? 0
-
-        // Deferral: while background work is outstanding, postpone consolidation
-        // so we never summarize a half-finished session. A bounded fallback
-        // (3 deferrals or 15 minutes) prevents an eternal deferral.
-        let deferred = false
-        yield* Effect.promise(async () => {
-          const memory = await loadMemory(sessionID)
-          if (shouldDefer(memory, backgroundCount)) {
-            await updateMemory(sessionID, (m) => {
-              noteDeferral(m)
-            })
-            deferred = true
-          }
-        })
-
-        if (deferred) {
-          logEvent("deferral", { sid: sessionID, reason: "background" })
-          return
-        }
 
         const fallbackNote = backgroundCount > 0
           ? "\n\nCatatan: background work mungkin masih berjalan; ringkasan dapat belum lengkap."
@@ -541,9 +529,47 @@ export default define({
           }),
         )
 
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.sync(() => logEvent("idle-background-failed", { error: Cause.pretty(cause) })),
+        ),
+      )
+
+    // Hook: idle (fast). Deferral is checked inline; consolidation and the
+    // periodic sweep run in the FiberMap, so this never blocks the host.
+    yield* ctx.session.hook("experimental.idle", (event: any) =>
+      Effect.gen(function* () {
+        const sessionID = sanitizeSessionID(event.sessionID)
+        const backgroundCount = event.background?.length ?? 0
+
+        // Deferral: while background work is outstanding, postpone consolidation
+        // so we never summarize a half-finished session. A bounded fallback
+        // (3 deferrals or 15 minutes) prevents an eternal deferral.
+        let deferred = false
+        yield* Effect.promise(async () => {
+          const memory = await loadMemory(sessionID)
+          if (shouldDefer(memory, backgroundCount)) {
+            await updateMemory(sessionID, (m) => {
+              noteDeferral(m)
+            })
+            deferred = true
+          }
+        })
+
+        if (deferred) {
+          logEvent("deferral", { sid: sessionID, reason: "background" })
+          return
+        }
+
+        // Consolidation runs in the session's background fiber; the hook is
+        // back before the model has even answered.
+        yield* FiberMap.run(background, `consolidation:${sessionID}`, consolidationFor(sessionID, backgroundCount), {
+          onlyIfMissing: true,
+        })
+
         if (sweepEnabled && Date.now() - lastSweepAt >= sweepIntervalMs) {
           lastSweepAt = Date.now()
-          yield* runSweep
+          yield* FiberMap.run(background, "sweep", runSweep, { onlyIfMissing: true })
         }
       }).pipe(Effect.catchCause((cause) => Effect.logWarning("memory-persistent idle hook failed", { cause }))),
     )
@@ -556,20 +582,38 @@ export default define({
         if (!sessionID) return Effect.void
 
         if (event.type === "session.deleted") {
-          return Effect.promise(async () => {
-            try {
-              const id = sanitizeSessionID(sessionID)
-              markDeleted(id)
-              await deleteMemoryFiles(id)
-              resetHealthState(id)
-            } catch (error) {
-              // Best-effort cleanup: swallow, but leave a trace of why.
-              logEvent("session-event", {
-                type: event.type,
-                sid: sessionID,
-                error: error instanceof Error ? error.message : String(error),
-              })
-            }
+          return Effect.gen(function* () {
+            const sanitized: { id: string | null } = yield* Effect.promise(async () => {
+              try {
+                return { id: sanitizeSessionID(sessionID) }
+              } catch (error) {
+                // Best-effort cleanup: swallow, but leave a trace of why.
+                logEvent("session-event", {
+                  type: event.type,
+                  sid: sessionID,
+                  error: error instanceof Error ? error.message : String(error),
+                })
+                return { id: null }
+              }
+            })
+            if (sanitized.id == null) return
+            const deletedID: string = sanitized.id
+            // Interrupt any consolidation fiber for this session before deleting.
+            yield* FiberMap.remove(background, `consolidation:${deletedID}`)
+            yield* Effect.promise(async () => {
+              try {
+                markDeleted(deletedID)
+                await deleteMemoryFiles(deletedID)
+                resetHealthState(deletedID)
+              } catch (error) {
+                // Best-effort cleanup: swallow, but leave a trace of why.
+                logEvent("session-event", {
+                  type: event.type,
+                  sid: sessionID,
+                  error: error instanceof Error ? error.message : String(error),
+                })
+              }
+            })
           })
         }
 

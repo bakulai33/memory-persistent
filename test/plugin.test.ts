@@ -107,6 +107,34 @@ describe("plugin (tools, hooks, events)", () => {
     )
   }
 
+  /** Runs the body while the activation scope is HELD OPEN, so background
+   * fibers (consolidation, sweeps) keep running exactly like in the real
+   * server, and are interrupted when the body completes. */
+  async function withHeldScope<T>(ctx: any, body: () => Promise<T>): Promise<T> {
+    let result!: T
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* (plugin.effect(ctx) as any)
+          yield* Effect.promise(async () => {
+            result = await body()
+          })
+        }) as any,
+      ) as any,
+    )
+    return result
+  }
+
+  /** Polls until `check` passes or the timeout elapses (condition-based wait). */
+  async function waitFor(check: () => Promise<boolean> | boolean, timeoutMs = 3000) {
+    const start = Date.now()
+    for (;;) {
+      if (await check()) return
+      if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out")
+      await new Promise((r) => setTimeout(r, 10))
+    }
+  }
+
   // ---------------------------------------------------------------- tools
   test("memory_store stores a note and returns its id", async () => {
     const { ctx, tools } = mockContext("ses_store")
@@ -347,7 +375,6 @@ describe("plugin (tools, hooks, events)", () => {
   // ---------------------------------------------------------------- idle: consolidation
   test("idle hook consolidates pending work and clears it", async () => {
     const { ctx, hooks } = mockContext("ses_idle")
-    await activate(ctx)
     const m = emptyMemory("ses_idle")
     for (let i = 0; i < 4; i++) {
       addPendingTurn(m, { turnId: `t${i}`, messageID: `m${i}`, userExcerpt: `quote ${i}`, createdAt: "", tier: "likely" })
@@ -355,21 +382,25 @@ describe("plugin (tools, hooks, events)", () => {
     m.needsConsolidation = true
     await writeMemory("ses_idle", m)
 
-    await runHook(hooks["experimental.idle"], { sessionID: "ses_idle", background: [] })
-
-    const after = await readMemory("ses_idle")
-    expect(after.pendingTurns).toHaveLength(0)
-    expect(after.needsConsolidation).toBe(false)
-    expect(after.consolidation.state).toBe("idle")
-    expect(after.consolidation.consecutiveFailures).toBe(0)
-    expect(after.summary).toContain("a summary")
+    await withHeldScope(ctx, async () => {
+      const idle = hooks["experimental.idle"]
+      await runHook(idle, { sessionID: "ses_idle", background: [] })
+      // Consolidation runs in a background fiber now: wait for it to finish.
+      await waitFor(async () => {
+        const after = await readMemory("ses_idle")
+        return after.pendingTurns.length === 0 && after.consolidation.state === "idle"
+      })
+      const after = await readMemory("ses_idle")
+      expect(after.needsConsolidation).toBe(false)
+      expect(after.consolidation.consecutiveFailures).toBe(0)
+      expect(after.summary).toContain("a summary")
+    })
   })
 
   test("idle hook records failure when the model call fails, facts survive", async () => {
     const failing = mockContext("ses_fail")
     failing.ctx.experimental.generate.text = () => Effect.fail(new Error("provider down") as any)
     failing.ctx.session.get = () => Effect.succeed({ model: undefined })
-    await activate(failing.ctx)
     const m = emptyMemory("ses_fail")
     // 8 entries cross the pendingActivity trigger threshold.
     m.pendingActivity = Array.from({ length: 8 }, (_, i) => ({
@@ -378,14 +409,15 @@ describe("plugin (tools, hooks, events)", () => {
     m.needsConsolidation = true
     await writeMemory("ses_fail", m)
 
-    await runHook(failing.hooks["experimental.idle"], { sessionID: "ses_fail", background: [] })
-
-    const after = await readMemory("ses_fail")
-    expect(after.consolidation.state).toBe("failed")
-    expect(after.consolidation.consecutiveFailures).toBe(1)
-    // facts survive the failed model call (hybrid promise)
-    expect(after.summaryFacts).toContain("- command: git commit")
-    expect(after.pendingActivity).toHaveLength(0)
+    await withHeldScope(failing.ctx, async () => {
+      await runHook(failing.hooks["experimental.idle"], { sessionID: "ses_fail", background: [] })
+      await waitFor(async () => (await readMemory("ses_fail")).consolidation.state === "failed")
+      const after = await readMemory("ses_fail")
+      expect(after.consolidation.consecutiveFailures).toBe(1)
+      // facts survive the failed model call (hybrid promise)
+      expect(after.summaryFacts).toContain("- command: git commit")
+      expect(after.pendingActivity).toHaveLength(0)
+    })
   })
 
   test("idle hook defers while background work is outstanding", async () => {
@@ -408,13 +440,19 @@ describe("plugin (tools, hooks, events)", () => {
 
   test("second idle inside the sweep interval skips the sweep", async () => {
     const { ctx, hooks } = mockContext("ses_sweep")
-    await activate(ctx)
-    const hook = hooks["experimental.idle"]
-    await runHook(hook, { sessionID: "ses_sweep", background: [] })
-    const callsAfterFirst = (ctx as any).listCalls()
-    await runHook(hook, { sessionID: "ses_sweep", background: [] })
-    // Default sweep interval is 6h: the second idle must not list sessions again.
-    expect((ctx as any).listCalls()).toBe(callsAfterFirst)
+    await withHeldScope(ctx, async () => {
+      const hook = hooks["experimental.idle"]
+      // The startup sweep runs in the background: wait until it has listed.
+      await waitFor(async () => (ctx as any).listCalls() >= 1)
+      await runHook(hook, { sessionID: "ses_sweep", background: [] })
+      await new Promise((r) => setTimeout(r, 100))
+      const callsAfterFirst = (ctx as any).listCalls()
+      await runHook(hook, { sessionID: "ses_sweep", background: [] })
+      await new Promise((r) => setTimeout(r, 100))
+      // Default sweep interval is 6h: neither idle may trigger a NEW sweep
+      // beyond the startup one.
+      expect((ctx as any).listCalls()).toBe(callsAfterFirst)
+    })
   })
 
   // ---------------------------------------------------------------- events
@@ -511,7 +549,6 @@ describe("plugin (tools, hooks, events)", () => {
       generated += 1
       return Effect.succeed({ text: "session-mode summary" })
     }
-    await activate(scoped.ctx)
     const m = emptyMemory("ses_modescoped")
     m.pendingActivity = Array.from({ length: 8 }, (_, i) => ({
       id: `a${i}`, kind: "command", target: `git commit ${i}`, command: "git", count: 1, createdAt: "",
@@ -519,11 +556,14 @@ describe("plugin (tools, hooks, events)", () => {
     m.needsConsolidation = true
     await writeMemory("ses_modescoped", m)
 
-    await runHook(scoped.hooks["experimental.idle"], { sessionID: "ses_modescoped", background: [] })
-    expect(generated).toBe(1)
-    const after = await readMemory("ses_modescoped")
-    expect(after.consolidation.state).toBe("idle")
-    expect(after.summary).toContain("session-mode summary")
+    await withHeldScope(scoped.ctx, async () => {
+      await runHook(scoped.hooks["experimental.idle"], { sessionID: "ses_modescoped", background: [] })
+      // state starts as "idle", so wait for the real completion signal.
+      await waitFor(async () => (await readMemory("ses_modescoped")).summary.includes("session-mode summary"))
+      expect(generated).toBe(1)
+      const after = await readMemory("ses_modescoped")
+      expect(after.consolidation.state).toBe("idle")
+    })
   })
 
   test("a sweep whose session listing fails is recorded as incomplete", async () => {
@@ -576,7 +616,6 @@ describe("plugin (tools, hooks, events)", () => {
 
   test("the deferral fallback consolidates with a partial note when deferrals are exhausted", async () => {
     const fb = mockContext("ses_fallback")
-    await activate(fb.ctx)
     const m = emptyMemory("ses_fallback")
     m.pendingActivity = Array.from({ length: 8 }, (_, i) => ({
       id: `a${i}`, kind: "command", target: `git commit ${i}`, command: "git", count: 1, createdAt: "",
@@ -588,11 +627,13 @@ describe("plugin (tools, hooks, events)", () => {
       mm.consolidation.deferrals = 3
       mm.consolidation.deferredSince = new Date(Date.now() - 20 * 60_000).toISOString()
     })
-    await runHook(fb.hooks["experimental.idle"], { sessionID: "ses_fallback", background: [{ id: "b1" }] })
-    const after = await readMemory("ses_fallback")
-    // Fallback: consolidation ran DESPITE background work.
-    expect(after.pendingActivity).toHaveLength(0)
-    expect(after.needsConsolidation).toBe(false)
+    await withHeldScope(fb.ctx, async () => {
+      await runHook(fb.hooks["experimental.idle"], { sessionID: "ses_fallback", background: [{ id: "b1" }] })
+      // Fallback: consolidation ran DESPITE background work.
+      await waitFor(async () => (await readMemory("ses_fallback")).pendingActivity.length === 0)
+      const after = await readMemory("ses_fallback")
+      expect(after.needsConsolidation).toBe(false)
+    })
   })
 
   test("session-mode consolidation logs the retry when the first attempt fails", async () => {
@@ -603,7 +644,6 @@ describe("plugin (tools, hooks, events)", () => {
       calls += 1
       return calls === 1 ? Effect.fail(new Error("transient") as any) : Effect.succeed({ text: "retried summary" })
     }
-    await activate(scoped.ctx)
     const m = emptyMemory("ses_mode_retry")
     m.pendingActivity = Array.from({ length: 8 }, (_, i) => ({
       id: `a${i}`, kind: "command", target: `git commit ${i}`, command: "git", count: 1, createdAt: "",
@@ -611,11 +651,14 @@ describe("plugin (tools, hooks, events)", () => {
     m.needsConsolidation = true
     await writeMemory("ses_mode_retry", m)
 
-    await runHook(scoped.hooks["experimental.idle"], { sessionID: "ses_mode_retry", background: [] })
-    expect(calls).toBe(2)
-    const after = await readMemory("ses_mode_retry")
-    expect(after.consolidation.state).toBe("idle")
-    expect(after.summary).toContain("retried summary")
+    await withHeldScope(scoped.ctx, async () => {
+      await runHook(scoped.hooks["experimental.idle"], { sessionID: "ses_mode_retry", background: [] })
+      // state starts as "idle"; wait for the retried summary to land instead.
+      await waitFor(async () => (await readMemory("ses_mode_retry")).summary.includes("retried summary"))
+      expect(calls).toBe(2)
+      const after = await readMemory("ses_mode_retry")
+      expect(after.consolidation.state).toBe("idle")
+    })
   })
 
   test("malformed lifecycle events are swallowed", async () => {
