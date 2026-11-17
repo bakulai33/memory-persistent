@@ -1,194 +1,262 @@
+[English](README.md) | Bahasa Indonesia
+
 # memory-persistent
 
-Plugin + skill OpenCode V2 untuk **memori persisten per sesi**. Model bisa mengingat
-apa yang sudah terjadi di sesi berjalan, dan memori itu **tidak pernah bocor ke sesi lain**.
+Per-session persistent memory for OpenCode V2 — a plugin + skill that lets the model
+remember what happened in the current session, while that memory can never leak into
+another session.
 
-## Fitur
+## Features
 
-- **Hybrid**: ringkasan otomatis + catatan manual.
-- **Per-sesi**: file disimpan per `sessionID`; tidak ada akses lintas sesi.
-- **Persistent**: bertahan setelah restart server.
-- **Auto-cleanup**: file memori terhapus otomatis saat sesi dihapus.
+- **Hybrid** — automatic consolidation of the session plus manual notes.
+- **Per-session** — memory files are stored per `sessionID`; there is no cross-session access.
+- **Persistent** — memory survives a server restart.
+- **Auto-cleanup** — memory files are removed when their session is deleted.
 
-## Konfigurasi
+## Requirements
 
-Tambahkan di `~/.config/opencode/opencode.json`:
+- OpenCode V2
+- [Bun](https://bun.sh) (OpenCode loads TypeScript plugin sources directly)
+- `effect` 4.x as a peer dependency (supplied by the OpenCode host)
+
+## Installation
+
+### From the npm registry
+
+```bash
+opencode plugin add opencode-memory-persistent@0.6.0
+```
+
+Then add it to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "plugins": ["opencode-memory-persistent@0.6.0"]
+}
+```
+
+or with plugin options:
 
 ```json
 {
   "plugins": [
-    { "package": "/path/ke/memory-persistent" }
+    { "package": "opencode-memory-persistent@0.6.0", "options": { "tokenBudget": 5000 } }
   ]
 }
 ```
 
-Opsi plugin:
+Pin the exact version.
 
-| Opsi | Default | Arti |
+### From a local directory
+
+```json
+{
+  "plugins": ["/path/to/memory-persistent"]
+}
+```
+
+A local directory loads through the package `exports` map; no build step is needed.
+
+## Configuration
+
+| Option | Default | Meaning |
 |---|---|---|
-| `tokenBudget` | `5000` | Batas token memori yang diinjeksikan ke konteks |
-| `sweepEnabled` | `true` | Aktifkan sweep file memori yatim |
-| `sweepIntervalMs` | `21600000` (6 jam) | Jarak antar sweep periodik |
-| `consolidationMode` | `stateless` | Mode panggilan konsolidasi: `stateless` (prompt dari delta saja, riwayat sesi tidak dikirim) atau `session` (riwayat sesi disertakan) |
+| `tokenBudget` | `5000` | Token budget of the memory injected into context |
+| `sweepEnabled` | `true` | Enable the sweep for orphaned memory files |
+| `sweepIntervalMs` | `21600000` (6 h) | Interval between periodic sweeps |
+| `consolidationMode` | `stateless` | Consolidation call mode: `stateless` (prompt built from the delta only; session history is not sent) or `session` (session history included) |
 
 ## Lifecycle
 
-| Kejadian | Yang terjadi |
+| Event | What happens |
 |---|---|
-| Prompt penting | Ditandai sebagai pending turn (heuristik, tanpa model); policy capture menentukan apakah disimpan |
-| Tool yang mengubah state | Dicatat sebagai activity: file yang diubah, command bermakna, atau error |
-| Setiap request | Memori diinjeksikan sebagai system part (maks `tokenBudget` token, default 5000) |
-| Sesi idle | Percakapan + activity dikonsolidasi: state `idle` → `running` → `idle` (sukses) atau `failed` (gagal) |
-| Konsolidasi berjalan > 5 menit tanpa selesai | Attempt dianggap mati, di-recover menjadi `failed` (consecutiveFailures++), lalu di-retry setelah backoff |
-| Konsolidasi gagal | State `failed`, error dicatat (di-redaksi), retry pada idle berikutnya setelah backoff 1→2→4→8→10 menit; batch naratif dilengkapi (turn pending tidak hilang) |
-| Konsolidasi sukses | State `idle`, `consecutiveFailures` = 0, `needsConsolidation` false bila tidak ada pending |
-| Sesi idle dengan background work aktif | Konsolidasi ditunda (defer) hingga 3 kali / 15 menit; ringkasan dapat bersifat parsial |
-| Sesi dibuat (child) | Mewarisi snapshot memori parent |
-| Sesi di-fork | Mewarisi snapshot memori sumber |
-| Sesi dihapus | File memori (dan backup corrupt) dihapus |
-| Startup / periodik | Sweep menghapus file memori yatim |
+| Important prompt | Marked as a pending turn (heuristic, no model); the capture policy decides whether it is stored |
+| State-changing tool | Recorded as activity: files changed, meaningful commands, or errors |
+| Every request | Memory is injected as a system part (max `tokenBudget` tokens, default 5000) |
+| Session idle | Conversation + activity are consolidated: state `idle` → `running` → `idle` (success) or `failed` |
+| Consolidation runs > 5 minutes without finishing | The attempt is considered dead, recovered as `failed` (`consecutiveFailures++`), then retried after backoff |
+| Consolidation fails | State `failed`, error recorded (redacted), retried on the next idle after a backoff of 1→2→4→8→10 minutes; the narrative batch is completed (pending turns are not lost) |
+| Consolidation succeeds | State `idle`, `consecutiveFailures` = 0, `needsConsolidation` false when nothing is pending |
+| Idle session with background work running | Consolidation is deferred (up to 3 times / 15 minutes); the summary may be partial |
+| Session created (child) | Inherits a snapshot of the parent's memory |
+| Session forked | Inherits a snapshot of the source session's memory |
+| Session deleted | Memory files (and corrupt backups) are removed |
+| Startup / periodic | Sweep removes orphaned memory files |
 
-Activity yang dicatat sengaja sempit: hanya file yang ditulis atau diubah,
-command yang memang mengubah state (`git`, `bun`, `npm`, `docker`, `pytest`, …),
-dan setiap error. Navigasi dan pembacaan (`cd`, `ls`, `grep`, `cat`) tidak
-disimpan karena hanya mengaburkan percakapan.
+Recorded activity is deliberately narrow: only files written or modified, commands that
+actually change state (`git`, `bun`, `npm`, `docker`, `pytest`, …), and every error.
+Navigation and reads (`cd`, `ls`, `grep`, `cat`) are not stored because they only blur
+the conversation.
 
 ## Anti-leak
 
-- `sessionID` selalu divalidasi (`[A-Za-z0-9_-]{1,128}`), path traversal ditolak.
-- Tool hanya bekerja pada sesi dari konteks eksekusi — `sessionID` tidak pernah diterima dari argumen.
-- Tidak ada tool untuk melihat sesi lain.
-- Child/fork hanya mewarisi snapshot saat pembuatan, lalu divergen; tidak ada sinkronisasi balik.
-- Isi memori hanya ringkasan dan catatan; output mentah tool tidak disimpan.
+- `sessionID` is always validated (`[A-Za-z0-9_-]{1,128}`); path traversal is rejected.
+- Tools only operate on the session taken from the execution context — `sessionID` is
+  never accepted from arguments.
+- There is no tool to read another session.
+- Child/fork sessions inherit a snapshot only at creation, then diverge; there is no
+  synchronization back.
+- Memory content is only summaries and notes; raw tool output is never stored.
 
 ## Capture policy
 
-- `always`: prompt yang membawa keputusan, error, perintah kerja, referensi file/path, atau prompt panjang.
-- `likely`: prompt lain yang bukan chatter.
-- `noise`: sapaan/pengakuan singkat (`hi`, `ok`, `thanks`, …) dan prompt sangat pendek — **tidak disimpan**.
-- Niat durable disimpan, chatter dibuang.
+- `always`: prompts carrying decisions, errors, work commands, or file/path references,
+  and long prompts.
+- `likely`: other prompts that are not chatter.
+- `noise`: short greetings/acknowledgements (`hi`, `ok`, `thanks`, …) and very short
+  prompts — **not stored**.
+- Durable intent is stored; chatter is dropped.
 
-## Tool
+## Tools
 
-| Tool | Fungsi |
+| Tool | Purpose |
 |---|---|
-| `memory_store` | Simpan catatan ringkas untuk sesi ini |
-| `memory_recall` | Panggil memori sesi ini (opsional `query`) |
-| `memory_list` | Daftar catatan sesi ini |
-| `memory_forget` | Hapus catatan berdasarkan `id` |
-| `memory_health` | Status konsolidasi sesi ini |
-| `tools/measure.ts` | Baca-only efektivitas tool; menyediakan laporan build, drift, dan schema versi tanpa memodifikasi memori |
+| `memory_store` | Store a concise note for this session |
+| `memory_recall` | Recall this session's memory (optional `query`) |
+| `memory_list` | List this session's notes |
+| `memory_forget` | Delete a note by `id` |
+| `memory_health` | Report this session's consolidation status |
 
 ## Schema
 
-- **Versi skema:** `4` (schema v4 dengan pemisahan facts warisan)
-- **Build catatan:** `build.json` mencatat `build: "0.6.0"` dan hash source; drift dilaporkan via `memory_health`
-- **Label "unverified":** Narasi model ditandai sebagai "Notes (model-generated, unverified):" — tidak pernah dijadikan sumber fakta
+- **Schema version:** `4` (schema v4 with legacy facts separation)
+- **Build record:** `build.json` stores `build: "0.6.0"` plus the source hash; drift is
+  reported via `memory_health`
+- **"unverified" label:** the model narrative is labelled
+  "Notes (model-generated, unverified):" — never treated as a source of facts
 
-## Facts vs Inherited Facts
+## Facts vs inherited facts
 
-- `summaryFacts` : fakta deterministik sesi ini (file, command, error yang plugin catat sendiri)
-- `summaryFactsInherited` : baris fakta warisan dari sesi parent, disimpan **mentah** di file (diisi saat child/fork dibuat); label `"Inherited from parent session:"` ditambahkan saat **injeksi**, bukan tersimpan di file
-- Saat injeksi memori, faktanya ditempatkan sebelum narasi model; fakta tetap disimpan meskipun narasi gagal
+- `summaryFacts`: deterministic facts of this session (files, commands, errors the
+  plugin recorded itself)
+- `summaryFactsInherited`: fact lines inherited from the parent session, stored **raw**
+  in the file (filled when a child/fork is created); the label
+  `"Inherited from parent session:"` is added at **injection** time, not stored in the file
+- When memory is injected, facts are placed before the model narrative; facts are still
+  written even if the narrative fails
 
-## Capture Marker Split (EN / ID / Prefix)
+## Capture marker split (EN / ID / prefix)
 
-Policy menangkap pakai tiga kelas marker (urutan prioritas):
+The capture policy uses three marker classes (priority order):
 
-1. **EN word** (`\\bword\\b`) — kata Inggris utuh, menghindari FP seperti "shoulders" dari "should"
-2. **Prefix** (tanpa batas kanan `\b`) — contoh: "analyz", "lanjut", "praq", "raq"
-3. **ID substring** — imbuhan Indonesia (di-, me-, ke-, -nya); cocok sebagai substring dalam kata ("disetujui", "perbaiki", dll.)
+1. **EN word** (`\\bword\\b`) — whole English words, avoiding false positives like
+   "shoulders" from "should"
+2. **Prefix** (no right boundary `\b`) — e.g. "analyz", "lanjut", "praq", "raq"
+3. **ID substring** — Indonesian affixes (di-, me-, ke-, -nya); matched as substrings
+   inside words ("disetujui", "perbaiki", …)
 
-Lainnya: panjang > 120 **karakter** → always; greetings → noise; pendek < 15 **karakter** → noise.
+Other rules: length > 120 **characters** → `always`; greetings → `noise`; shorter than
+15 **characters** → `noise`.
 
-## Input Validation: `validateStoreInput`
+## Input validation (`validateStoreInput`)
 
-- Menolak teks kosong setelah trim
-- Menolak jika `tags` bukan array
-- Menolak jika > 16 tag
-- Setiap tag harus string, maks 64 karakter, tanpa kontrol karakter (0x1F)
-- Error dikembalikan sebagai `null` bila valid, atau pesan rejection string
+- Rejects text that is empty after trimming (`Rejected: text is empty`)
+- Rejects text longer than 8192 characters (`Rejected: text too long (max 8 KB)`)
+- Rejects if `tags` is not an array
+- Rejects more than 16 tags
+- Each tag must be a string of at most 64 characters without control characters
+  (0x00–0x1F) (`Rejected: invalid tag`)
 
-## Skill Path Derivation (not hard-coded)
+## Skill path derivation (not hard-coded)
 
-- Path dinamis: `resolveSkillPath()` menggunakan `import.meta.url` dan `dirname()` untuk menemukan `skills/memory-persistent/SKILL.md`
-- Tidak di-hardcode sebagai `/home/<user>/...` ⇒ plugin bisa dipasang di mana saja
+- The path is derived dynamically: `resolveSkillPath()` uses `import.meta.url` and
+  `dirname()` to locate `skills/memory-persistent/SKILL.md`
+- Nothing is hard-coded as `/home/<user>/...` ⇒ the plugin can be installed anywhere
 
 ## Skill
 
-`@memory-persistent` — memuat kapan harus store/recall, kapan memanggil
-`memory_health`, dan larangan menyimpan output mentah atau secret.
+`@memory-persistent` — covers when to store/recall, when to call `memory_health`, and
+the prohibition on storing raw tool output or secrets.
 
-## Catatan operasional
+## Operational notes
 
-- **Restart server jika reload source plugin gagal.** Loader plugin lokal hot-reload perubahan
-  source yang konsisten (edit content-only mengevaluasi ulang graph module), tetapi evaluasi
-  yang gagal — mis. import nama yang tidak diekspor target — di-cache dan meracuni setiap
-  reload berikutnya dalam proses yang sama; plugin tetap menjalankan build sebelumnya sampai
-  server di-restart, dan self-check startup melaporkan source tree rusak
-  (`source-tree-inconsistent`).
-- Saat aktivasi, plugin memeriksa konsistensi graph import (self-check). Jika ada mismatch,
-  aktivasi dibatalkan dengan log `source-tree-inconsistent` (FATAL) dan plugin tidak terdaftar.
-  Perbaiki nama export/import lalu restart server.
-- Konsolidasi menggunakan **panggilan model stateless** (default): hanya prompt yang dibangun
-  dari delta (facts + conversation + notes + activity) yang dikirim; riwayat sesi tidak disertakan.
-  Memori menyimpan facts deterministik plus naratif model opsional; facts tetap ditulis meskipun
-  naratif gagal.
-- Build record (`build.json`) mencatat source hash; drift antar aktivasi dilaporkan lewat
-  `memory_health` dan log.
+- **Restart the server if a plugin source reload fails.** The local plugin loader
+  hot-reloads consistent content-only changes, but a failed evaluation — e.g. importing
+  a name the target does not export — is cached and poisons every later reload in the
+  same process; the plugin keeps running the previous build until the server restarts,
+  and the startup self-check reports a broken source tree (`source-tree-inconsistent`).
+- On activation the plugin checks the import graph for consistency. On any mismatch,
+  activation is aborted with a `source-tree-inconsistent` log (FATAL) and the plugin is
+  not registered. Fix the export/import names and restart the server.
+- Consolidation uses **stateless model calls** (default): only the prompt built from the
+  delta (facts + conversation + notes + activity) is sent; session history is not
+  included. Memory stores deterministic facts plus an optional model narrative; facts
+  are written even when the narrative fails.
+- The build record (`build.json`) stores the source hash; drift between activations is
+  reported via `memory_health` and the log.
 
-## Penyimpanan
+## Storage & privacy
 
-```
-${XDG_DATA_HOME:-~/.local/share}/opencode/memory-persistent/sessions/<sessionID>.json
-${XDG_DATA_HOME:-~/.local/share}/opencode/memory-persistent/plugin.log
-```
-
-File log plugin (`plugin.log`) memuat baris terstruktur `[memory-persistent] ...` yang tidak
-ditangkap server; dibatasi 64 KiB (tail terbaru dipertahankan). Path-nya juga dilaporkan
-oleh `memory_health` (`logPath`).
-
-Permission `0600` untuk file, `0700` untuk direktori. Backup file yang gagal diparse berakhir dengan `.json.corrupt.<timestamp>`. Permission diperbaiki otomatis saat aktivasi (`repairPermissions`).
+- Memory lives locally under `${XDG_DATA_HOME:-~/.local/share}/opencode/memory-persistent/`:
+  - `sessions/<sessionID>.json` — one file per session
+  - `plugin.log` — structured `[memory-persistent] ...` lines the server does not
+    capture; capped at 64 KiB (newest tail kept); its path is also reported by
+    `memory_health` (`logPath`)
+- Permissions: `0600` for files, `0700` for directories, repaired automatically on
+  activation (`repairPermissions`). Corrupt files are moved aside as
+  `.json.corrupt.<timestamp>`.
+- Files are **plaintext JSON — there is no encryption at rest**. Rely on your usual
+  user/disk security.
+- **The only network traffic** is the consolidation model call when the session goes
+  idle: it sends the prompt built from the delta (facts, conversation, notes, activity)
+  to the model provider OpenCode already uses for your chat. Nothing else is contacted.
+- Secrets are redacted **before anything is written to disk** — best-effort heuristics,
+  not a guarantee.
+- **No telemetry.** Nothing is sent to the plugin author or any analytics service.
 
 ## Measure
 
-`tools/measure.ts` adalah CLI **read-only** untuk melaporkan efektivitas tool: ia hanya
-membaca file memori dan mencetak JSON laporan — tidak ada angka yang direkayasa; laporan
-hanya memuat apa yang benar-benar dibaca dari file.
+`tools/measure.ts` is a **read-only** CLI that reports tool effectiveness: it only reads
+memory files and prints a JSON report — no numbers are fabricated; the report contains
+only what was actually read from the files.
 
 ```bash
 bun run tools/measure.ts <sessions-dir>
 ```
 
-Kolom utama laporan (`MeasureReport`):
+Main columns of the report (`MeasureReport`):
 
-| Kolom | Arti |
+| Column | Meaning |
 |---|---|
-| `totalFiles` | Jumlah file memori yang dibaca |
-| `schemaVersions` | Distribusi versi skema (per field `version`, fallback `schema`) |
-| `builds` | Distribusi build yang menulis file |
-| `driftCount` | File yang terakhir ditulis oleh build selain build yang berjalan |
-| `facts.sessions` | File yang memuat ≥ 1 baris fakta |
-| `facts.ownLines` | Jumlah baris fakta milik sesi sendiri |
-| `facts.inheritedLines` | Jumlah baris fakta warisan dari parent |
-| `facts.genericPct` | Persentase baris fakta berbentuk `- <kind>: <target>` dengan kind yang dikenal |
-| `facts.dupLines` | Kemunculan ekstra baris fakta yang terduplikasi |
+| `totalFiles` | Number of memory files read |
+| `schemaVersions` | Distribution of schema versions (per `version` field, falling back to `schema`) |
+| `builds` | Distribution of builds that wrote the files |
+| `driftCount` | Files last written by a build other than the running one |
+| `facts.sessions` | Files containing ≥ 1 fact line |
+| `facts.ownLines` | Number of fact lines owned by the session itself |
+| `facts.inheritedLines` | Number of fact lines inherited from the parent |
+| `facts.genericPct` | Percentage of fact lines of the form `- <kind>: <target>` with a known kind |
+| `facts.dupLines` | Extra occurrences of duplicated fact lines |
 
-## Pengembangan
+The report also carries a `pending` group (counts of pending turns and activity), a
+`notes` group (own vs inherited note lines), and a `hygiene` group (permission issues,
+corrupt backups, stale tmp files).
+
+## Development
 
 ```bash
 bun install
 bun test
-bunx tsc --noEmit
+bun run check        # bun test && bunx tsc --noEmit
+bun run fixtures     # regenerate tool-call fixtures (needs the test/ directory — not shipped to npm; source checkouts only)
+bun run measure      # read-only effectiveness report
 ```
 
 ## Limitations
 
-- Redaksi secret bersifat **best-effort** (heuristik, bukan jaminan).
-- Kutipan turn parent tidak diwarisi dalam snapshot child/fork (hanya ringkasan + notes).
-- Label depth baris fakta warisan default `"parent"` (depth 1); untuk depth > 1 dirender
-  `Inherited from N earlier sessions:` — depth tersimpan per blok warisan (satu angka),
-  bukan per baris.
-- Rantai inherited tumbuh di file; cap dilakukan saat injeksi (budget token).
-- File sesi yang sudah dihapus dapat muncul kembali maksimal 1 sweep bila
-  tombstone-nya ter-evict dari cap 256.
+- Secret redaction is **best-effort** (heuristics, not a guarantee).
+- Parent turn quotes are not inherited in child/fork snapshots (only the summary +
+  notes).
+- The inherited-fact depth label defaults to `"parent"` (depth 1); for depth > 1 it
+  renders `Inherited from N earlier sessions:` — depth is stored per inherited block
+  (one number), not per line.
+- Inherited chains grow inside the file; capping happens at injection time (token
+  budget).
+- A deleted session's file can reappear for at most one more sweep if its tombstone was
+  evicted from the 256 cap.
+- Consolidation retry is scheduled on the **next idle event** after backoff
+  (1→2→4→8→10 minutes); there is no standalone timer.
+
+## License
+
+[MIT](LICENSE) © 2026 bakulai33
