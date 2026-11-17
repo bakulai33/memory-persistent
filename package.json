@@ -9,7 +9,6 @@
   "bugs": { "url": "https://github.com/bakulai33/memory-persistent/issues" },
   "keywords": ["opencode", "opencode-plugin", "memory", "session", "persistence", "effect", "ai"],
   "type": "module",
-  "private": true,
   "exports": { ".": "./src/index.ts" },
   "main": "src/index.ts",
   "files": [
