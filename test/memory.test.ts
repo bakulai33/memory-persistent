@@ -65,6 +65,14 @@ describe("memory", () => {
     expect(n.text).toBe("decision X")
   })
 
+  test("appendNote redacts secrets in tags, keeps plain tags (T2.2)", () => {
+    const m = emptyMemory("s_tags")
+    const n = appendNote(m, "deploy note", ["deploy", "token=npm_abcdefghijklmnopqrstuvwxyz012345678"], "manual")
+    expect(n.tags).toContain("deploy")
+    expect(n.tags.join(" ")).not.toContain("npm_abcdefghijklmnopqrstuvwxyz012345678")
+    expect(n.tags.join(" ")).toContain("[REDACTED]")
+  })
+
   test("removeNote removes", () => {
     const m = emptyMemory("s1")
     const n = appendNote(m, "decision X")

@@ -604,6 +604,24 @@ describe("plugin (tools, hooks, events)", () => {
     expect(log.split("hook-error").length - 1).toBeGreaterThanOrEqual(2)
   })
 
+  test("a curl command secret never reaches memory, injection or prompt (T2.2)", async () => {
+    const { ctx, hooks } = mockContext("ses_curlsec")
+    await activate(ctx)
+    await runHook(hooks["tool:execute.after"], {
+      tool: "shell",
+      sessionID: "ses_curlsec",
+      input: { command: 'curl "https://api.test/v1?api_key=SUPERSECRET123"' },
+      status: "completed",
+    })
+    const m = await readMemory("ses_curlsec")
+    // memory target bebas secret
+    expect(JSON.stringify(m.pendingActivity)).not.toContain("SUPERSECRET123")
+    // injection bebas secret
+    const { buildInjection, buildConsolidationInput } = await import("../src/memory")
+    expect(buildInjection(m, 5000)).not.toContain("SUPERSECRET123")
+    expect(buildConsolidationInput(m, 12000)).not.toContain("SUPERSECRET123")
+  })
+
   test("the startup sweep deletes orphan memory files and logs it", async () => {
     // An orphan: a memory file whose session does not exist in the listing.
     await writeMemory("ses_orphan_live", emptyMemory("ses_orphan_live"))

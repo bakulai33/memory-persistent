@@ -204,6 +204,15 @@ export function normalizeActivityTarget(kind: "file" | "command" | "error", targ
 }
 
 /**
+ * Command targets can carry credentials in their arguments (`curl
+ * "...?api_key=SECRET"`), so they are redacted. File targets are NOT: a path
+ * legitimately contains words like "token" and redaction would mangle it.
+ */
+export function redactActivityTarget(kind: "command" | "file", target: string): string {
+  return kind === "command" ? redact(target) : target
+}
+
+/**
  * Turns a finished tool call into the activity worth remembering.
  * Read-only tools and unknown commands contribute nothing; errors always do.
  */
@@ -232,7 +241,7 @@ export function classifyToolCall(
         if (READONLY_COMMANDS.has(binary)) continue
         if (binary === "git" && detail.subcommand !== null && READONLY_GIT_SUBCOMMANDS.has(detail.subcommand)) continue
         const target = detail.subcommand ? `${binary} ${detail.subcommand}` : binary
-        result.push({ kind: "command", target, command: binary, turnID })
+        result.push({ kind: "command", target: redactActivityTarget("command", target), command: binary, turnID })
       }
     }
   }

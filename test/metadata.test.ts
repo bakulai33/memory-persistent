@@ -66,6 +66,18 @@ describe("classifyToolCall", () => {
     expect(entries).toEqual([{ kind: "command", target: "bun test", command: "bun", turnID: undefined }])
   })
 
+  test("redacts a secret in a command target (T2.2)", () => {
+    const entries = classifyToolCall("shell", { command: 'curl "https://api.test/v1?api_key=SUPERSECRET123"' }, { status: "completed" })
+    expect(entries[0]!.kind).toBe("command")
+    expect(JSON.stringify(entries)).not.toContain("SUPERSECRET123")
+    expect(JSON.stringify(entries)).toContain("[REDACTED]")
+  })
+
+  test("keeps file targets unredacted (T2.2)", () => {
+    const entries = classifyToolCall("write", { path: "src/token.ts" }, { status: "completed" })
+    expect(entries[0]!.target).toBe("src/token.ts")
+  })
+
   test("ignores trivial shell commands", () => {
     expect(classifyToolCall("shell", { command: "cd /x && ls -la" }, { status: "completed" })).toEqual([])
   })
@@ -220,6 +232,17 @@ describe("redact patterns", () => {
       "verify -----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\nabc123\n-----END RSA PRIVATE KEY----- done",
       "MIIEowIBAAKCAQEA",
     ],
+    // T2.2: JSON quoted keys (pattern lama tak mencocokkan `"` sebelum `:`)
+    ["JSON quoted api_key", '{"api_key": "SUPERSECRET123"}', "SUPERSECRET123"],
+    ["JSON quoted password", '{"password": "hunter2secret"}', "hunter2secret"],
+    // T2.2: bare provider tokens
+    ["npm token", "export NPM_TOKEN=npm_abcdefghijklmnopqrstuvwxyz012345678", "npm_abcdefghijklmnopqrstuvwxyz012345678"],
+    ["anthropic token", "Authorization: sk-ant-api03-abcdefghijklmnopqrstuvwxyz1234567890", "sk-ant-api03-abcdefghijklmnopqrstuvwxyz1234567890"],
+    ["openai project token", "key sk-proj-abcdefghijklmnopqrstuvwxyz1234567890", "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890"],
+    ["google api key", "googlemaps key=AIzaSyA1234567890abcdefghijklmnopqrstuv", "AIzaSyA1234567890abcdefghijklmnopqrstuv"],
+    ["slack bot token", "webhook token xoxb-123456789012-1234567890123-abcdefghijklmnopqr", "xoxb-123456789012-1234567890123-abcdefghijklmnopqr"],
+    ["gitlab pat", "clone glpat-abcdefghijklmnopqrst", "glpat-abcdefghijklmnopqrst"],
+    ["aws temporary key", "upload with ASIAXXXXXXXXXXXXXXXX session key", "ASIAXXXXXXXXXXXXXXXX"],
   ]
 
   for (const [name, input, secret] of secrets) {

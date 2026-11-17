@@ -1,12 +1,24 @@
 const PATTERNS: RegExp[] = [
   /(?:api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*["']?[^"'\s]+/gi,
+  // JSON quoted keys: the generic pattern above cannot cross the closing quote
+  // of `"api_key":`, so match the quoted VALUE via lookbehind/lookahead and
+  // keep the key readable.
+  /(?<="(?:api[_-]?key|secret|token|password|passwd|pwd)"\s*:\s*")[^"]*(?=")/gi,
   /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi,
-  /sk-[A-Za-z0-9]{20,}/g,
+  // sk- covers plain OpenAI keys plus sk-ant-/sk-proj- (dashes included).
+  /sk-[A-Za-z0-9_-]{20,}/g,
+  /npm_[A-Za-z0-9]{20,}/g,
   /ghp_[A-Za-z0-9]{30,}/g,
   // Nilai header Authorization/Proxy-Authorization (dua token pertama setelah titik dua).
   /(?:proxy-)?authorization\s*:\s*\S+(?:\s+\S+)?/gi,
-  // AWS access key id (AKIA + 16 alnum huruf besar).
-  /AKIA[0-9A-Z]{16}/g,
+  // AWS access key id (AKIA permanent / ASIA temporary + 16 alnum huruf besar).
+  /(?:AKIA|ASIA)[0-9A-Z]{16}/g,
+  // Google API key (AIza + 35).
+  /AIza[A-Za-z0-9_-]{35}/g,
+  // Slack token (xoxb/xoxp/xoxa/xoxr/xoxs).
+  /xox[baprs]-[A-Za-z0-9-]{10,}/g,
+  // GitLab personal access token.
+  /glpat-[A-Za-z0-9_-]{20,}/g,
   // JWT: tiga segmen base64url dipisah titik, segmen pertama diawali eyJ.
   /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
   // Userinfo kredensial URL pada scheme yang dikenal; scheme dan @host dipertahankan.

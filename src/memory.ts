@@ -89,7 +89,9 @@ export function appendNote(memory: MemoryFile, text: string, tags: string[] = []
   const note: MemoryNote = {
     id: randomUUID(),
     text: redact(text),
-    tags,
+    // Tags reach the injection and recall payloads verbatim, so they get the
+    // same redaction as the note text (P1-2).
+    tags: tags.map(redact),
     createdAt: new Date().toISOString(),
     source,
   }
