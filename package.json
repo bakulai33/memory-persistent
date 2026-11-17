@@ -15,6 +15,7 @@
     "src",
     "skills",
     "tools/measure.ts",
+    "tools/selfcheck.ts",
     "README.md",
     "README.id.md",
     "CHANGELOG.md",
@@ -38,6 +39,7 @@
   "scripts": {
     "test": "bun test",
     "check": "bun test && bunx tsc --noEmit",
+    "selfcheck": "bun run tools/selfcheck.ts",
     "fixtures": "bun run test/fixtures/generate-tool-calls.ts",
     "measure": "bun run tools/measure.ts"
   }

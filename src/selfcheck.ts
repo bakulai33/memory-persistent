@@ -19,6 +19,7 @@ const EXPORT_RE =
 // rejected when it contains a quote, which means a side-effect import was crossed.
 const IMPORT_RE = /^[ \t]*import\s+(type\s+)?([\s\S]*?)\s+from\s*["']([^"']+)["']/gm
 const REEXPORT_RE = /^[ \t]*export\s+(type\s+)?\{([^}]*)\}\s+from\s*["']([^"']+)["']/gm
+const STAR_RE = /^[ \t]*export\s+\*\s+from\s*["']([^"']+)["']/gm
 
 /** Names a module exports, including `default`, re-exports, and type-only exports. */
 function exportedNames(source: string): Set<string> {
@@ -100,6 +101,25 @@ function importRequests(source: string): Map<string, Set<string>> {
   return requests
 }
 
+/**
+ * Names a module exports, following `export * from` chains (depth-capped) so a
+ * star re-export never produces a false positive.
+ */
+function exportedNamesFull(source: string, dir: string, depth = 0): Set<string> {
+  const names = exportedNames(source)
+  if (depth >= 8) return names
+  for (const match of source.matchAll(STAR_RE)) {
+    const target = resolveModule(dir, match[1]!)
+    if (!target) continue
+    try {
+      for (const name of exportedNamesFull(readFileSync(target, "utf8"), dirname(target), depth + 1)) {
+        names.add(name)
+      }
+    } catch {}
+  }
+  return names
+}
+
 /** Maps a `./x.js`-style specifier to the `.ts` file that provides it, if any. */
 function resolveModule(importerDir: string, specifier: string): string | null {
   const base = resolve(importerDir, specifier)
@@ -117,39 +137,66 @@ function resolveModule(importerDir: string, specifier: string): string | null {
 }
 
 /**
- * Reads only: reports named imports in `<dir>/index.ts` whose local target does
- * not export them. An empty result means the module graph can link.
+ * The FULL import graph check: BFS over local runtime imports starting at
+ * `<dir>/index.ts`, verifying every named import against its target module
+ * (including `export *` chains). An empty result means the whole reachable
+ * graph can link — not just the entry's own imports.
  */
-export function checkSourceTree(dir: string): ImportMismatch[] {
-  const importer = join(dir, "index.ts")
-  let source: string
+export function checkSourceGraph(dir: string): ImportMismatch[] {
+  const entry = join(dir, "index.ts")
+  let entrySource: string
   try {
-    source = readFileSync(importer, "utf8")
+    entrySource = readFileSync(entry, "utf8")
   } catch {
     return []
   }
 
-  const scanned = new Set(scannedImports(source))
   const mismatches: ImportMismatch[] = []
+  const visited = new Set<string>()
+  const queue: string[] = [entry]
 
-  for (const [specifier, names] of importRequests(source)) {
-    if (!specifier.startsWith(".") || !scanned.has(specifier)) continue
-    const target = resolveModule(dirname(importer), specifier)
-    if (!target) continue
+  while (queue.length > 0) {
+    const importer = queue.shift()!
+    if (visited.has(importer)) continue
+    visited.add(importer)
 
-    let targetSource: string
+    let source: string
     try {
-      targetSource = readFileSync(target, "utf8")
+      source = readFileSync(importer, "utf8")
     } catch {
       continue
     }
 
-    const exported = exportedNames(targetSource)
-    const missing = [...names].filter((name) => !exported.has(name)).sort()
-    if (missing.length > 0) mismatches.push({ importer, from: specifier, missing })
+    const scanned = new Set(scannedImports(source))
+    for (const [specifier, names] of importRequests(source)) {
+      if (!specifier.startsWith(".") || !scanned.has(specifier)) continue
+      const target = resolveModule(dirname(importer), specifier)
+      if (!target) continue
+      if (!visited.has(target)) queue.push(target)
+
+      let targetSource: string
+      try {
+        targetSource = readFileSync(target, "utf8")
+      } catch {
+        continue
+      }
+
+      const exported = exportedNamesFull(targetSource, dirname(target))
+      const missing = [...names].filter((name) => !exported.has(name)).sort()
+      if (missing.length > 0) mismatches.push({ importer, from: specifier, missing })
+    }
   }
 
-  return mismatches.sort((a, b) => a.from.localeCompare(b.from))
+  return mismatches.sort((a, b) => a.importer.localeCompare(b.importer) || a.from.localeCompare(b.from))
+}
+
+/**
+ * Reads only: reports named imports in `<dir>/index.ts` whose local target does
+ * not export them. Kept as the entry-focused wrapper over `checkSourceGraph`.
+ */
+export function checkSourceTree(dir: string): ImportMismatch[] {
+  const entry = join(dir, "index.ts")
+  return checkSourceGraph(dir).filter((mismatch) => mismatch.importer === entry)
 }
 
 /**

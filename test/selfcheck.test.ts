@@ -2,7 +2,7 @@ import { describe, test, expect, afterEach } from "bun:test"
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { checkSourceTree, sourceHash } from "../src/selfcheck"
+import { checkSourceTree, checkSourceGraph, sourceHash } from "../src/selfcheck"
 import { resolveSkillPath } from "../src/index"
 import { existsSync } from "node:fs"
 
@@ -54,6 +54,71 @@ describe("checkSourceTree", () => {
 
   test("the real plugin source tree is consistent", () => {
     expect(checkSourceTree(SRC)).toEqual([])
+  })
+})
+
+describe("checkSourceGraph (T2.3)", () => {
+  test("returns no mismatch for a consistent tree", () => {
+    expect(checkSourceGraph(materialize("consistent"))).toEqual([])
+  })
+
+  test("reports a mismatch in a NESTED module, naming its importer", () => {
+    const dir = tree([
+      ["index.ts", 'import { a } from "./a.js"\nexport const run = a\n'],
+      ["a.ts", 'import { b } from "./b.js"\nexport const a = () => b\n'],
+      ["b.ts", "export const c = 1\n"],
+    ])
+    const mismatches = checkSourceGraph(dir)
+    expect(mismatches).toHaveLength(1)
+    expect(mismatches[0]!.importer.endsWith("a.ts")).toBe(true)
+    expect(mismatches[0]!.from).toBe("./b.js")
+    expect(mismatches[0]!.missing).toEqual(["b"])
+  })
+
+  test("the real plugin source tree is consistent", () => {
+    expect(checkSourceGraph(SRC)).toEqual([])
+  })
+
+  test("export * re-exports are not false positives", () => {
+    const dir = tree([
+      ["index.ts", 'import { a } from "./a.js"\nexport const run = a\n'],
+      ["a.ts", 'export * from "./b.js"\n'],
+      ["b.ts", "export const a = 1\n"],
+    ])
+    expect(checkSourceGraph(dir)).toEqual([])
+  })
+
+  test("chained export * resolves transitively", () => {
+    const dir = tree([
+      ["index.ts", 'import { a } from "./a.js"\nexport const run = a\n'],
+      ["a.ts", 'export * from "./b.js"\n'],
+      ["b.ts", 'export * from "./c.js"\n'],
+      ["c.ts", "export const a = 1\n"],
+    ])
+    expect(checkSourceGraph(dir)).toEqual([])
+  })
+})
+
+describe("selfcheck CLI (T2.3)", () => {
+  const repo = join(import.meta.dir, "..")
+
+  test("exits 0 on the real plugin tree", () => {
+    const proc = Bun.spawnSync(["bun", "run", join(repo, "tools", "selfcheck.ts")], { cwd: repo })
+    expect(proc.exitCode).toBe(0)
+    expect(new TextDecoder().decode(proc.stdout)).toContain("source graph ok")
+  })
+
+  test("exits non-zero and prints the missing name for a broken tree", () => {
+    const dir = tree([
+      ["index.ts", 'import { a } from "./a.js"\nexport const run = a\n'],
+      ["a.ts", 'import { b } from "./b.js"\nexport const a = () => b\n'],
+      ["b.ts", "export const c = 1\n"],
+    ])
+    const proc = Bun.spawnSync(["bun", "run", join(repo, "tools", "selfcheck.ts"), dir], { cwd: repo })
+    expect(proc.exitCode).not.toBe(0)
+    const out = new TextDecoder().decode(proc.stdout) + new TextDecoder().decode(proc.stderr)
+    expect(out).toContain("./b.js")
+    expect(out).toContain("b")
   })
 })
 

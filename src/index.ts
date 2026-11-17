@@ -56,7 +56,7 @@ import {
 } from "./health.js"
 import { logEvent, logPath } from "./log.js"
 import { classifyToolCall } from "./metadata.js"
-import { checkSourceTree, sourceHash } from "./selfcheck.js"
+import { checkSourceGraph, sourceHash } from "./selfcheck.js"
 import { BUILD, SCHEMA_VERSION } from "./build.js"
 import { randomUUID } from "node:crypto"
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
@@ -117,7 +117,9 @@ export default define({
 
     // A module graph that fails to link makes OpenCode cache the rejection and keep
     // running the previous generation forever. Refuse activation loudly instead.
-    const mismatches = checkSourceTree(dir)
+    // The full graph is a diagnostic: it cannot prove the ENTRY link (the loader's
+    // own import of index.ts) — documented as an accepted limitation.
+    const mismatches = checkSourceGraph(dir)
     if (mismatches.length > 0) {
       setHealthRuntime({ build: BUILD, sourceHash: "", sourceTreeOk: false })
       for (const mismatch of mismatches) {
