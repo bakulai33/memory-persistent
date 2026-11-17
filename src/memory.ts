@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import type { MemoryFile, MemoryNote, PendingTurn } from "./storage.js"
-import { capActivity, capPendingTurns, readMemory, readMemoryLocked, writeMemory, buildSnapshot } from "./storage.js"
+import { capActivity, capPendingTurns, capNotes, NOTES_CAP, readMemory, readMemoryLocked, writeMemory, buildSnapshot } from "./storage.js"
 import { defaultTokenCounter, truncateToTokenBudget } from "./tokenizer.js"
 import { redact } from "./redact.js"
 import { deltaAttemptId } from "./consolidation.js"
@@ -15,6 +15,57 @@ export const SUMMARY_BUDGET_SHARE = 0.5
 export const SUMMARY_SHARE = SUMMARY_BUDGET_SHARE
 /** Shared cap used by buildInjection and the write path. */
 export const summaryCap = SUMMARY_BUDGET_SHARE
+/** Re-exported for consumers that only know the memory module. */
+export { NOTES_CAP }
+/**
+ * Char-level cap applied to every section BEFORE tokenization: the tokenizer
+ * runs a binary search, so handing it megabytes of text costs seconds per
+ * request. 4 chars/token keeps the pre-cap strictly above the token-level cut
+ * that `allocate`/`truncateToTokenBudget` applies afterwards.
+ */
+export const SECTION_CHAR_FACTOR = 4
+/** Manual-note text is injected and (later) recalled as a preview of at most this many chars. */
+export const NOTE_PREVIEW_CHARS = 500
+
+/** Hard char cap per section before tokenization: `budget * SECTION_CHAR_FACTOR`. */
+function sectionChars(budget: number): number {
+  return (Number.isFinite(budget) ? Math.max(0, Math.floor(budget)) : 0) * SECTION_CHAR_FACTOR
+}
+
+/** Char-level head/tail cap; text shorter than the cap is returned unchanged. */
+export function capTextByChars(text: string, maxChars: number, mode: "head" | "tail" = "head"): string {
+  if (!Number.isFinite(maxChars) || maxChars < 0) return ""
+  if (text.length <= maxChars) return text
+  return mode === "tail" ? text.slice(-maxChars) : text.slice(0, maxChars)
+}
+
+/**
+ * Keeps WHOLE lines within a char budget. `head` keeps the first lines, `tail`
+ * the last. The first line that no longer fits whole is cut so the cap is hard.
+ */
+export function capLinesByChars(lines: string[], maxChars: number, mode: "head" | "tail" = "head"): string[] {
+  if (!Number.isFinite(maxChars) || maxChars < 0) return []
+  const kept: string[] = []
+  let used = 0
+  const ordered = mode === "tail" ? [...lines].reverse() : lines
+  for (const line of ordered) {
+    const room = maxChars - used
+    if (room <= 0) break
+    if (line.length <= room) {
+      kept.push(line)
+      used += line.length + 1
+      continue
+    }
+    kept.push(mode === "tail" ? line.slice(line.length - room) : line.slice(0, room))
+    break
+  }
+  return mode === "tail" ? kept.reverse() : kept
+}
+
+/** A manual note enters the injection as a bounded preview, never as its full text. */
+export function previewNote(text: string, maxChars: number = NOTE_PREVIEW_CHARS): string {
+  return capTextByChars(text, maxChars, "head")
+}
 export interface Delta {
   readonly attemptId: string
   readonly turnIds: string[]
@@ -44,6 +95,7 @@ export function appendNote(memory: MemoryFile, text: string, tags: string[] = []
   }
   memory.notes.push(note)
   memory.needsConsolidation = true
+  capNotes(memory)
   return note
 }
 
@@ -100,14 +152,15 @@ function depthLabel(depth?: number): string {
 }
 
 export function buildInjection(memory: MemoryFile, budget = 5000): string {
+  const chars = sectionChars(budget)
   let summaryCore = ""
   if (memory.summaryFacts || memory.summaryFactsInherited || memory.summaryNarrative) {
     const cap = Number.isFinite(budget) ? Math.max(0, Math.floor(budget)) : 0
     const factsBudget = Math.floor(cap * FACTS_BUDGET_SHARE)
     const narrativeBudget = Math.floor(cap * NARRATIVE_BUDGET_SHARE)
     const summaryBudget = Math.floor(cap * SUMMARY_BUDGET_SHARE)
-    const ownFacts = (memory.summaryFacts ?? "").trim()
-    const inheritedFacts = (memory.summaryFactsInherited ?? "").trim()
+    const ownFacts = capLinesByChars((memory.summaryFacts ?? "").trim().split("\n"), chars, "tail").join("\n")
+    const inheritedFacts = capTextByChars((memory.summaryFactsInherited ?? "").trim(), chars, "head")
     // Own facts are resolved against factsBudget FIRST (tail-keep = newest).
     // Inherited get only the REMAINING budget, truncated keep-head on the
     // labeled block (label survives at the head).
@@ -115,7 +168,7 @@ export function buildInjection(memory: MemoryFile, budget = 5000): string {
     const remaining = Math.max(0, factsBudget - defaultTokenCounter(ownPart))
     const inheritedPart = inheritedFacts ? truncateToTokenBudget(`${depthLabel(memory.inheritedDepth)}\n${inheritedFacts}`, remaining) : ""
     const factsText = [ownPart, inheritedPart].filter(Boolean).join("\n\n")
-    const narrativeRaw = (memory.summaryNarrative ?? "").trim()
+    const narrativeRaw = capTextByChars((memory.summaryNarrative ?? "").trim(), chars, "head")
     const narrativeFitted = fitNarrative(factsText, narrativeRaw, narrativeBudget, summaryBudget)
     const narrativePart = narrativeFitted
       ? `${NARRATIVE_LABEL}\n${narrativeFitted}`
@@ -123,22 +176,34 @@ export function buildInjection(memory: MemoryFile, budget = 5000): string {
     summaryCore = [factsText, narrativePart].filter(Boolean).join("\n\n")
     if (defaultTokenCounter(summaryCore) > summaryBudget) summaryCore = truncateToTokenBudget(summaryCore, summaryBudget)
   } else if (memory.summary) {
-    summaryCore = memory.summary
+    summaryCore = capTextByChars(memory.summary, chars, "head")
   }
   const summary = summaryCore ? `Summary:\n${summaryCore}` : ""
   const conversation = memory.pendingTurns.length
-    ? `Conversation:\n${memory.pendingTurns.map((t) => `- ${t.userExcerpt}`).join("\n")}`
+    ? `Conversation:\n${capLinesByChars(memory.pendingTurns.map((t) => `- ${t.userExcerpt}`), chars, "head").join("\n")}`
     : ""
   // Seksi notes TUNGGAL: own lines dulu, lalu blok inherited berlabel.
   // Truncation keep-head per seksi (cap 0.15) memotong inherited lebih dulu,
   // jadi own menang secara alami tanpa aritmetika budget baru.
-  const ownNoteLines = memory.notes.map((n) => `- ${n.text}`)
-  const inheritedNoteLines = (memory.notesInherited ?? []).map((n) => `- ${n.text}`)
-  const notes = ownNoteLines.length || inheritedNoteLines.length
-    ? ["Manual notes:", ...ownNoteLines, ...(inheritedNoteLines.length ? ["Manual notes (inherited):", ...inheritedNoteLines] : [])].join("\n")
-    : ""
+  // Setiap note masuk sebagai preview <= 500 char dan section di-cap chars
+  // SEBELUM tokenisasi, agar tokenizer tidak pernah melihat teks 1,6 MB.
+  const ownNoteLines = memory.notes.map((n) => `- ${previewNote(n.text)}`)
+  const inheritedNoteLines = (memory.notesInherited ?? []).map((n) => `- ${previewNote(n.text)}`)
+  const noteLines =
+    ownNoteLines.length || inheritedNoteLines.length
+      ? capLinesByChars(
+          [
+            "Manual notes:",
+            ...ownNoteLines,
+            ...(inheritedNoteLines.length ? ["Manual notes (inherited):", ...inheritedNoteLines] : []),
+          ],
+          chars,
+          "head",
+        )
+      : []
+  const notes = noteLines.length ? noteLines.join("\n") : ""
   const activity = memory.pendingActivity.length
-    ? `Activity:\n${memory.pendingActivity.map((a) => `- ${a.kind}: ${a.target}${a.count > 1 ? ` (${a.count}x)` : ""}`).join("\n")}`
+    ? `Activity:\n${capLinesByChars(memory.pendingActivity.map((a) => `- ${a.kind}: ${a.target}${a.count > 1 ? ` (${a.count}x)` : ""}`), chars, "head").join("\n")}`
     : ""
 
   const sections: (Section | undefined)[] = [
@@ -154,7 +219,12 @@ export function buildInjection(memory: MemoryFile, budget = 5000): string {
     const piece = truncateToTokenBudget(section.text, allowance[index]!)
     if (piece) parts.push(piece)
   })
-  return parts.join("\n\n")
+  const out = parts.join("\n\n")
+  // Token counting is not additive across joined sections; trim the tail when
+  // the assembled injection still overshoots the budget.
+  const total = defaultTokenCounter(out)
+  if (total > budget && Number.isFinite(budget)) return truncateToTokenBudget(out, Math.max(0, Math.floor(budget)))
+  return out
 }
 
 /**
@@ -224,19 +294,30 @@ function isDelta(input: MemoryFile | Delta): input is Delta {
 export function buildConsolidationInput(input: MemoryFile | Delta, budget = 12000): string {
   if (isDelta(input)) return buildConsolidationPrompt(input, budget)
   const memory = input as MemoryFile
+  const chars = sectionChars(budget)
   // Headers label the sections for the model; they are not part of the
   // content budget, so a tiny allowance still carries at least one line.
-  const summary = memory.summary ? { header: "CURRENT SUMMARY:", body: memory.summary } : undefined
+  const summary = memory.summary ? { header: "CURRENT SUMMARY:", body: capTextByChars(memory.summary, chars, "head") } : undefined
   const conversation = memory.pendingTurns.length
-    ? { header: "CONVERSATION:", body: memory.pendingTurns.map((t) => `- ${t.userExcerpt}`).join("\n") }
+    ? {
+        header: "CONVERSATION:",
+        body: capLinesByChars(memory.pendingTurns.map((t) => `- ${t.userExcerpt}`), chars, "head").join("\n"),
+      }
     : undefined
   const notes = memory.notes.length
-    ? { header: "MANUAL NOTES:", body: memory.notes.map((n) => `- ${n.text}`).join("\n") }
+    ? {
+        header: "MANUAL NOTES:",
+        body: capLinesByChars(memory.notes.map((n) => `- ${previewNote(n.text)}`), chars, "head").join("\n"),
+      }
     : undefined
   const activity = memory.pendingActivity.length
     ? {
         header: "ACTIVITY:",
-        body: memory.pendingActivity.map((a) => `- ${a.kind}: ${a.target}${a.count > 1 ? ` (${a.count}x)` : ""}`).join("\n"),
+        body: capLinesByChars(
+          memory.pendingActivity.map((a) => `- ${a.kind}: ${a.target}${a.count > 1 ? ` (${a.count}x)` : ""}`),
+          chars,
+          "head",
+        ).join("\n"),
       }
     : undefined
 
@@ -297,13 +378,43 @@ export function collectDelta(m: MemoryFile): Delta {
 }
 
 export function buildConsolidationPrompt(delta: Delta, budget: number): string {
-  const parts: string[] = []
-  if (delta.summary) parts.push(`CURRENT SUMMARY:\n${delta.summary}`)
-  if (delta.facts) parts.push(`FACTS:\n${delta.facts}`)
-  if (delta.turns.length) parts.push(`CONVERSATION:\n${delta.turns.map((t) => `- ${t.excerpt}`).join("\n")}`)
-  if (delta.notes.length) parts.push(`MANUAL NOTES:\n${delta.notes.map((n) => `- ${n.text}`).join("\n")}`)
-  parts.push(`Tulis ringkasan final di bawah ${budget} token. Jangan sertakan output mentah.`)
-  return parts.join("\n\n")
+  const instruction = `Tulis ringkasan final di bawah ${budget} token. Jangan sertakan output mentah.`
+  const chars = sectionChars(budget)
+  // Reserve the instruction (+ separator slack) so it survives every cut; the
+  // remaining budget is split across the content sections by `allocate`.
+  let contentBudget = Math.max(0, (Number.isFinite(budget) ? Math.max(0, Math.floor(budget)) : 0) - defaultTokenCounter(instruction) - 2)
+  const summary = delta.summary ? capTextByChars(delta.summary, chars, "head") : ""
+  const facts = delta.facts ? capLinesByChars(delta.facts.split("\n"), chars, "head").join("\n") : ""
+  const turnLines = delta.turns.map((t) => `- ${t.excerpt}`)
+  const noteLines = delta.notes.map((n) => `- ${previewNote(n.text)}`)
+  const sections: (Section | undefined)[] = [
+    summary ? { text: summary, capPct: 0.3 } : undefined,
+    facts ? { text: facts, capPct: 0.25 } : undefined,
+    turnLines.length ? { text: capLinesByChars(turnLines, chars, "head").join("\n"), capPct: 0.25 } : undefined,
+    noteLines.length ? { text: capLinesByChars(noteLines, chars, "head").join("\n"), capPct: 0.2 } : undefined,
+  ]
+  const labeled = ["CURRENT SUMMARY:", "FACTS:", "CONVERSATION:", "MANUAL NOTES:"]
+  let prompt = ""
+  // Token counting is not additive across assembled sections (BPE merges over
+  // "\n\n" boundaries), so re-cut the content when the joined prompt overshoots.
+  // The instruction is always re-appended, never cut.
+  let attempt = 0
+  while (attempt < 4) {
+    attempt++
+    const allowance = allocate(sections, contentBudget)
+    const parts: string[] = []
+    sections.forEach((section, index) => {
+      if (!section) return
+      const piece = truncateToTokenBudget(section.text, allowance[index]!)
+      if (piece) parts.push(`${labeled[index]}\n${piece}`)
+    })
+    parts.push(instruction)
+    prompt = parts.join("\n\n")
+    const total = defaultTokenCounter(prompt)
+    if (total <= budget) break
+    contentBudget = Math.max(0, contentBudget - (total - budget) - 1)
+  }
+  return prompt
 }
 
 export type ConsolidationMode = "stateless" | "session"

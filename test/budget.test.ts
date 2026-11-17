@@ -1,18 +1,25 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   buildInjection,
+  buildConsolidationPrompt,
   SUMMARY_BUDGET_SHARE,
   SUMMARY_SHARE,
   applyDelta,
+  appendNote,
+  capLinesByChars,
+  capTextByChars,
+  NOTES_CAP,
+  previewNote,
   type Delta,
 } from "../src/memory"
 import { defaultTokenCounter } from "../src/tokenizer"
-import { emptyMemory, addActivity } from "../src/storage"
+import { emptyMemory, addActivity, readMemory, writeMemory } from "../src/storage"
 import { beginAttempt } from "../src/consolidation"
 import { collectDelta } from "../src/memory"
+import { logPath } from "../src/log"
 
 describe("B1 own wins, inherited per-block truncated (Task 3.3)", () => {
   test("own facts survive; inherited truncated from head under small budget (B1)", () => {
@@ -130,5 +137,123 @@ describe("budget alignment", () => {
     m.summaryNarrative = "NARRATIVE-SURVIVES-MARKER"
     const out = buildInjection(m, 5000)
     expect(out).toContain("NARRATIVE-SURVIVES-MARKER")
+  })
+})
+
+describe("pre-tokenization caps + notes cap (T1.1)", () => {
+  let dir: string
+  let orig: string | undefined
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mem-cap-"))
+    orig = process.env.XDG_DATA_HOME
+    process.env.XDG_DATA_HOME = dir
+  })
+
+  afterEach(() => {
+    if (orig === undefined) delete process.env.XDG_DATA_HOME
+    else process.env.XDG_DATA_HOME = orig
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const bigMemory = (sessionID: string) => {
+    const m = emptyMemory(sessionID)
+    for (let i = 0; i < 200; i++) {
+      m.notes.push({ id: `n${i}`, text: `note ${i} ${"x".repeat(8000)}`, tags: [], createdAt: "", source: "manual" })
+    }
+    m.pendingTurns = Array.from({ length: 20 }, (_, i) => ({
+      turnId: `t${i}`,
+      messageID: `m${i}`,
+      userExcerpt: "turn ".repeat(200),
+      createdAt: "",
+      tier: "likely",
+    } as any))
+    m.pendingActivity = Array.from({ length: 40 }, (_, i) => ({
+      id: `a${i}`,
+      kind: "command",
+      target: `cmd${i}`,
+      command: "c",
+      count: 1,
+      createdAt: "",
+    } as any))
+    return m
+  }
+
+  test("injection 200x8KB tetap <= budget token (guard output)", () => {
+    const out = buildInjection(bigMemory("ses_big"), 5000)
+    expect(defaultTokenCounter(out)).toBeLessThanOrEqual(5000)
+  })
+
+  test("previewNote memotong note 8KB ke <= 500 karakter", () => {
+    const preview = previewNote(`MARKER-HEAD ${"x".repeat(8000)}`, 500)
+    expect(preview.length).toBeLessThanOrEqual(500)
+    expect(preview.startsWith("MARKER-HEAD")).toBe(true)
+  })
+
+  test("capTextByChars: invariant panjang, mode head/tail, teks pendek tak berubah", () => {
+    const text = "abcdef".repeat(1000)
+    expect(capTextByChars(text, 100, "head")).toBe(text.slice(0, 100))
+    const tail = capTextByChars(text, 100, "tail")
+    expect(tail).toBe(text.slice(-100))
+    expect(capTextByChars(text, 10000)).toBe(text)
+  })
+
+  test("capLinesByChars: baris utuh <= maxChars, mode head dan tail", () => {
+    const lines = Array.from({ length: 50 }, (_, i) => `line-${i}-${"-".repeat(50)}`)
+    const head = capLinesByChars(lines, 200, "head")
+    expect(head.join("\n").length).toBeLessThanOrEqual(200)
+    expect(head[0]).toBe(lines[0])
+    const tail = capLinesByChars(lines, 200, "tail")
+    expect(tail.join("\n").length).toBeLessThanOrEqual(200)
+    expect(tail[tail.length - 1]).toBe(lines[lines.length - 1])
+  })
+
+  test("injection memakai preview note 500 char, bukan teks penuh", () => {
+    const m = emptyMemory("ses_preview")
+    m.notes = [{ id: "n1", text: `MARKER-HEAD ${"y".repeat(8000)}`, tags: [], createdAt: "", source: "manual" } as any]
+    const out = buildInjection(m, 5000)
+    expect(out).toContain("MARKER-HEAD")
+    // Preview 500 char hanya menyisakan ~496 'y'; teks penuh menyisakan ribuan.
+    expect(out.includes("y".repeat(600))).toBe(false)
+  })
+
+  test("prompt konsolidasi <= budget dan memuat instruksi + facts terbaru", () => {
+    const m = bigMemory("ses_prompt")
+    m.pendingActivity = Array.from({ length: 40 }, (_, i) => ({
+      id: `a${i}`,
+      kind: "command",
+      target: `TAILFACT-${i}`,
+      command: "c",
+      count: 1,
+      createdAt: "",
+    } as any))
+    const prompt = buildConsolidationPrompt(collectDelta(m), 4500)
+    expect(defaultTokenCounter(prompt)).toBeLessThanOrEqual(4500)
+    expect(prompt).toContain("Tulis ringkasan final di bawah 4500 token")
+    expect(prompt).toContain("TAILFACT-39")
+  })
+
+  test("appendNote membatasi NOTES_CAP=200, evict tertua, log note-evicted", () => {
+    expect(NOTES_CAP).toBe(200)
+    const m = emptyMemory("ses_cap")
+    for (let i = 0; i < 201; i++) appendNote(m, `CAPNOTE-${i}`)
+    expect(m.notes).toHaveLength(200)
+    expect(m.notes.some((n) => n.text.includes("CAPNOTE-0"))).toBe(false)
+    expect(m.notes[m.notes.length - 1]!.text).toContain("CAPNOTE-200")
+    expect(readFileSync(logPath(), "utf8")).toContain("note-evicted")
+  })
+
+  test("write path cap: legacy 300 notes -> 200 tersimpan + consolidatedNotes di-clamp", async () => {
+    const m = emptyMemory("ses_legacy300")
+    for (let i = 0; i < 300; i++) {
+      m.notes.push({ id: `n${i}`, text: `LEG-${i}`, tags: [], createdAt: "", source: "manual" })
+    }
+    m.consolidation.consolidatedNotes = 250
+    await writeMemory("ses_legacy300", m)
+    const loaded = await readMemory("ses_legacy300")
+    expect(loaded.notes).toHaveLength(200)
+    expect(loaded.notes.some((n) => n.text === "LEG-0")).toBe(false)
+    expect(loaded.notes.some((n) => n.text === "LEG-299")).toBe(true)
+    expect(loaded.consolidation.consolidatedNotes).toBeLessThanOrEqual(NOTES_CAP)
   })
 })

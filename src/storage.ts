@@ -381,6 +381,7 @@ async function writeMemoryUnlocked(sessionID: string, memory: MemoryFile): Promi
   const path = memoryPath(id)
   memory.sessionID = id
   memory.updatedAt = new Date().toISOString()
+  capNotes(memory)
   // The build that last wrote the file is always the running build: a migration
   // is read-only and never stamps, so drift clears after the next real write.
   memory.build = BUILD
@@ -628,6 +629,25 @@ export function isDeleted(sessionID: string): boolean {
 export function capPendingTurns(turns: PendingTurn[], max = 20): PendingTurn[] {
   if (turns.length <= max) return turns
   return turns.slice(turns.length - max)
+}
+
+/** Manual notes are capped per session so a legacy or runaway file cannot grow
+ * without bound: the OLDEST notes are evicted and the eviction is logged. */
+export const NOTES_CAP = 200
+
+/** Evicts the oldest notes beyond `NOTES_CAP` and clamps `consolidatedNotes`
+ * so the "new notes" counter never goes negative. Returns the evicted count. */
+export function capNotes(memory: MemoryFile): number {
+  const excess = memory.notes.length - NOTES_CAP
+  if (excess > 0) {
+    memory.notes.splice(0, excess)
+    logEvent("note-evicted", { count: excess, sid: memory.sessionID })
+  }
+  const consolidated = memory.consolidation?.consolidatedNotes
+  if (Number.isFinite(consolidated) && consolidated > memory.notes.length) {
+    memory.consolidation.consolidatedNotes = memory.notes.length
+  }
+  return Math.max(0, excess)
 }
 
 export function capActivity(entries: ActivityEntry[], max = 40): ActivityEntry[] {
