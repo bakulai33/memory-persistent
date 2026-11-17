@@ -5,10 +5,10 @@
     "": {
       "name": "memory-persistent",
       "dependencies": {
+        "@opencode/plugin": "^2.2.5",
         "gpt-tokenizer": "^4.1.2",
       },
       "devDependencies": {
-        "@opencode/plugin": "2.2.5",
         "@types/node": "^26.6.6",
         "bun-types": "^1.4.4",
         "effect": "4.1.0",
