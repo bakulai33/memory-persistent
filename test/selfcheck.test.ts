@@ -85,17 +85,19 @@ describe("sourceHash", () => {
   })
 })
 
-test("pathSkillDiturunkanDariLokasiPlugin", () => {
+test("the skill path is derived from the plugin location", () => {
   const skillPath = resolveSkillPath()
   // (a) file yang ditunjuk benar-benar ada
   expect(existsSync(skillPath)).toBe(true)
   // (b) path menunjuk SKILL.md yang benar
   expect(skillPath.endsWith(join("skills", "memory-persistent", "SKILL.md"))).toBe(true)
-  // (c) DISKRIMINATIF: source tidak boleh memuat path mesin yang di-hard-code.
-  //     Dengan implementasi hard-coded lama (`"/home/<user>/.../SKILL.md"`), assertion
-  //     ini GAGAL — itulah daya pembedanya.
+  // (c) DISKRIMINATIF: source tidak boleh memuat hardcoded home path.
+  //     Kontrol positif membuktikan pola menangkap bentuk lama;
+  //     kontrol negatif membuktikan source bersih.
+  const HARDCODED_SAMPLE = 'const p = "/home/example-user/Documents/x"'
+  expect(HARDCODED_SAMPLE).toMatch(/\/home\/[A-Za-z0-9._-]+\//)
   const src = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf8")
-  expect(src).not.toContain("/home/<user>/Documents")
+  expect(src).not.toMatch(/\/home\/[A-Za-z0-9._-]+\//)
 })
 
 describe("checkSourceTree: export forms and resolution", () => {
