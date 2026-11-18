@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import type { MemoryFile, MemoryNote, PendingTurn } from "./storage.js"
-import { capActivity, capPendingTurns, capNotes, NOTES_CAP, readMemory, readMemoryLocked, writeMemory, buildSnapshot } from "./storage.js"
+import { capActivity, capPendingTurns, capNotes, NOTES_CAP, readMemory, readMemoryLocked, writeMemory, updateMemory, buildSnapshot, dedupeFactLines } from "./storage.js"
 import { defaultTokenCounter, truncateToTokenBudget } from "./tokenizer.js"
 import { redact } from "./redact.js"
 import { deltaAttemptId } from "./consolidation.js"
@@ -440,7 +440,48 @@ export async function saveMemory(sessionID: string, memory: MemoryFile): Promise
 export async function copyMemory(fromSessionID: string, toSessionID: string): Promise<void> {
   if (fromSessionID === toSessionID) return
   const parent = await readMemoryLocked(fromSessionID)
-  await writeMemory(toSessionID, buildSnapshot(parent, toSessionID))
+  await updateMemory(toSessionID, (child) => {
+    const childHasOwnState =
+      child.parentSnapshotFrom !== null ||
+      child.pendingTurns.length > 0 ||
+      child.pendingActivity.length > 0 ||
+      child.notes.length > 0 ||
+      child.summary !== "" ||
+      child.summaryNarrative !== "" ||
+      child.summaryFacts !== "" ||
+      child.needsConsolidation === true
+    if (childHasOwnState) {
+      // The child already has a life of its own (P1-7): its own pending
+      // turns, notes and consolidation state survive; only the inherited
+      // chains gain the new parent's lines, deduped so a repeated fork
+      // event is idempotent. The lineage label is NOT overwritten.
+      const curated = parent.pendingActivity.map(
+        (a) => `- ${a.kind}: ${a.target}${a.count > 1 ? ` (${a.count}x)` : ""}`,
+      )
+      const incoming = dedupeFactLines([
+        ...curated,
+        ...(parent.summaryFacts ?? "").split("\n"),
+        ...(parent.summaryFactsInherited ?? "").split("\n"),
+      ])
+      const existing = (child.summaryFactsInherited ?? "").split("\n").filter(Boolean)
+      // The newest fork's curated lines head the chain, ahead of what the
+      // child inherited before (dedupeFactLines keeps the first occurrence).
+      child.summaryFactsInherited = dedupeFactLines([...incoming, ...existing]).join("\n")
+      child.notesInherited = [
+        ...(child.notesInherited ?? []),
+        ...(parent.notesInherited ?? []),
+        ...parent.notes,
+      ]
+        // The same parent note never lands twice, however often the fork
+        // event fires.
+        .filter((note, index, all) => all.findIndex((n) => n.id === note.id) === index)
+        .slice(-20)
+      return
+    }
+    // A child without any state of its own gets the full snapshot, written
+    // under its own lock so no concurrent child write is lost.
+    Object.assign(child, buildSnapshot(parent, toSessionID))
+  })
 }
 
 export function collectDelta(m: MemoryFile): Delta {

@@ -138,3 +138,78 @@ describe("child snapshot", () => {
     }
   })
 })
+
+describe("snapshot merge into a live child (T3.2)", () => {
+  let dir: string
+  let orig: string | undefined
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mem-"))
+    orig = process.env.XDG_DATA_HOME
+    process.env.XDG_DATA_HOME = dir
+  })
+
+  afterEach(() => {
+    if (orig === undefined) delete process.env.XDG_DATA_HOME
+    else process.env.XDG_DATA_HOME = orig
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("a fork into a child that already has its own work keeps that work", async () => {
+    // The child started working before the fork event arrives.
+    const child = emptyMemory("ses_child_work")
+    addPendingTurn(child, { turnId: "t1", messageID: "m1", userExcerpt: "child quote", createdAt: "" })
+    appendNote(child, "child note")
+    child.summary = "child summary"
+    await writeMemory("ses_child_work", child)
+
+    const parent = emptyMemory("ses_parent_w")
+    parent.summaryFacts = "- file: src/parent.ts"
+    addActivity(parent, { kind: "command", target: "bun test" })
+    appendNote(parent, "parent note")
+    await writeMemory("ses_parent_w", parent)
+
+    await copyMemory("ses_parent_w", "ses_child_work")
+
+    const after = await readMemory("ses_child_work")
+    // The child's OWN state survives the inheritance.
+    expect(after.pendingTurns.map((t) => t.turnId)).toEqual(["t1"])
+    expect(after.notes.map((n) => n.text)).toEqual(["child note"])
+    expect(after.summary).toBe("child summary")
+    // The inherited chains carry the parent's lines and notes.
+    expect(after.summaryFactsInherited).toContain("- command: bun test")
+    expect(after.summaryFactsInherited).toContain("- file: src/parent.ts")
+    expect(after.notesInherited!.map((n) => n.text)).toContain("parent note")
+  })
+
+  test("an existing lineage label is not overwritten by a second fork", async () => {
+    const child = emptyMemory("ses_child_line")
+    child.parentSnapshotFrom = "ses_first_parent"
+    await writeMemory("ses_child_line", child)
+
+    const parent = emptyMemory("ses_second_parent")
+    parent.summaryFacts = "- file: src/second.ts"
+    await writeMemory("ses_second_parent", parent)
+
+    await copyMemory("ses_second_parent", "ses_child_line")
+
+    const after = await readMemory("ses_child_line")
+    expect(after.parentSnapshotFrom).toBe("ses_first_parent")
+    // Only the inherited chain gains the new parent's line.
+    expect(after.summaryFactsInherited).toContain("- file: src/second.ts")
+  })
+
+  test("a repeated fork event is idempotent", async () => {
+    const parent = emptyMemory("ses_parent_idem")
+    parent.summaryFacts = "- file: src/idem.ts"
+    appendNote(parent, "idem note")
+    await writeMemory("ses_parent_idem", parent)
+
+    await copyMemory("ses_parent_idem", "ses_child_idem")
+    await copyMemory("ses_parent_idem", "ses_child_idem")
+
+    const after = await readMemory("ses_child_idem")
+    expect(after.summaryFactsInherited.split("\n").filter(Boolean)).toEqual(["- file: src/idem.ts"])
+    expect(after.notesInherited!.map((n) => n.text)).toEqual(["idem note"])
+  })
+})
