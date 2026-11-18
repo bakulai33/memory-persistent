@@ -706,6 +706,25 @@ describe("plugin (tools, hooks, events)", () => {
     })
   })
 
+  test("an idle hook with nothing to consolidate leaves the file untouched (T4.2)", async () => {
+    const idle = mockContext("ses_idle_nochg")
+    await updateMemory("ses_idle_nochg", (m) => {
+      m.summary = "seeded"
+    })
+    const path = join(memoryDir(), "ses_idle_nochg.json")
+    const before = statSync(path)
+    await withHeldScope(idle.ctx, async () => {
+      await runHook(idle.hooks["experimental.idle"], { sessionID: "ses_idle_nochg", background: [] })
+      // Let the background collect fiber run to completion.
+      await new Promise((r) => setTimeout(r, 60))
+      const after = statSync(path)
+      // The no-op consolidation must not rewrite the file: the inode (fresh
+      // rename would change it) and the mtime both stay.
+      expect(after.ino).toBe(before.ino)
+      expect(after.mtimeMs).toBe(before.mtimeMs)
+    })
+  })
+
   test("malformed lifecycle events are swallowed", async () => {
     const { ctx } = mockContext("ses_life", [
       { type: "session.deleted", data: { sessionID: "bad/id" } },   // sanitize throws -> catch

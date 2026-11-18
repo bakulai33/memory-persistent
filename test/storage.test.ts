@@ -16,6 +16,8 @@ import {
   memoryDir,
   capPendingTurns,
   addActivity,
+  updateMemory,
+  NO_WRITE,
 } from "../src/storage"
 import { appendNote, copyMemory, validateStoreInput } from "../src/memory"
 import { canConsolidate, emptyConsolidation } from "../src/consolidation"
@@ -438,5 +440,21 @@ describe("activity command inference", () => {
     await writeFile(path, JSON.stringify(raw), { encoding: "utf8" })
     const m = await readMemory("ses_normq")
     expect(m.pendingActivity[0]?.command).toBe("git")
+  })
+
+  test("updateMemory skips the disk write for a NO_WRITE mutate (T4.2)", async () => {
+    const sid = "ses_nowrite"
+    await updateMemory(sid, (m) => {
+      m.summary = "kept"
+    })
+    const path = memoryPath(sid)
+    const before = statSync(path)
+    await new Promise((r) => setTimeout(r, 10))
+    const { value } = await updateMemory(sid, () => NO_WRITE)
+    expect(value).toBe(NO_WRITE)
+    // The no-op mutate must not rewrite the file: inode AND content stay.
+    const after = statSync(path)
+    expect(after.ino).toBe(before.ino)
+    expect((await readMemory(sid)).summary).toBe("kept")
   })
 })

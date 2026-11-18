@@ -7,6 +7,8 @@ import {
   deleteMemoryFiles,
   listMemoryFiles,
   markDeleted,
+  isDeleted,
+  NO_WRITE,
   repairPermissions,
   sanitizeSessionID,
   updateMemory,
@@ -431,15 +433,24 @@ export default define({
         }
         yield* Effect.promise(() =>
           runConsolidation({
-            collect: async () =>
-              (
-                await updateMemory(sessionID, (m) => {
-                  if (!shouldConsolidate(m)) return null
-                  if (!canConsolidate(m)) return null
-                  beginAttempt(m, deltaAttemptId())
-                  return collectDelta(m)
-                })
-              ).value,
+            collect: async () => {
+              // A deleted session's fiber must not write: log the skip so it
+              // stays observable (the T1.3 slot-freeing pin counts this line),
+              // and skip the read-modify-write entirely.
+              if (isDeleted(sessionID)) {
+                logEvent("write-skipped-deleted", { sid: sessionID })
+                return null
+              }
+              const { value } = await updateMemory(sessionID, (m) => {
+                // A no-op collect must not rewrite the file: the sentinel
+                // skips the disk write, so the inode and mtime stay (P2-2).
+                if (!shouldConsolidate(m)) return NO_WRITE
+                if (!canConsolidate(m)) return NO_WRITE
+                beginAttempt(m, deltaAttemptId())
+                return collectDelta(m)
+              })
+              return value === NO_WRITE ? null : value
+            },
             generate: async (delta) => {
               try {
                 const prompt = buildConsolidationPrompt(delta, Math.floor(budget * 0.9)) + fallbackNote

@@ -414,6 +414,13 @@ export interface MemoryUpdate<T> {
   readonly value: T
 }
 
+/**
+ * Sentinel a mutate can return to signal "nothing changed": the read-modify-
+ * write still runs, but the disk write is skipped entirely, so the file's
+ * inode and mtime stay untouched (P2-2).
+ */
+export const NO_WRITE = Symbol("memory-persistent.no-write")
+
 export async function updateMemory<T>(
   sessionID: string,
   mutate: (m: MemoryFile) => T | Promise<T>,
@@ -422,6 +429,7 @@ export async function updateMemory<T>(
   return withLock(id, async () => {
     const m = await readMemory(id)
     const value = await mutate(m)
+    if (value === (NO_WRITE as unknown)) return { memory: m, value }
     await writeMemoryUnlocked(id, m)
     return { memory: m, value }
   })
