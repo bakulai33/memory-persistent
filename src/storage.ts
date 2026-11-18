@@ -332,22 +332,14 @@ export async function readMemory(sessionID: string): Promise<MemoryFile> {
     } else if (parsed.version === 2) {
       memory = migrateV2(parsed as MemoryFileV2)
     } else if (parsed.version === 3) {
-      const v3 = parsed as unknown as MemoryFileV3
-      memory = {
-        ...v3,
-        version: SCHEMA_VERSION,
-        build: parsed.build ?? BUILD,
-        summary: parsed.summary ?? "",
-        summaryFacts: parsed.summaryFacts ?? "",
-        summaryFactsInherited: "",
-        summaryNarrative: parsed.summaryNarrative ?? "",
-        captureCounters: { always: 0, likely: 0, noiseSkipped: 0 },
-        notes: parsed.notes ?? [],
-        pendingTurns: (parsed.pendingTurns ?? []).map(withTier),
-        pendingActivity: (parsed.pendingActivity ?? []).map(normalizeActivityEntry),
-        needsConsolidation: parsed.needsConsolidation === true,
-        consolidation: normalizeConsolidation(parsed.consolidation),
-      }
+      // A malformed legacy file must normalize, not crash into quarantine:
+      // the v3 record goes through the same defensive normalizer as v4
+      // (P2-3), then the fields v3 predates are forced back to their v3
+      // semantics.
+      memory = normalizeMemory(parsed, id)
+      memory.summaryFactsInherited = ""
+      memory.captureCounters = { always: 0, likely: 0, noiseSkipped: 0 }
+      if (!memory.build) memory.build = BUILD
     } else if (parsed.version === SCHEMA_VERSION) {
       memory = normalizeMemory(parsed, id)
     } else {
@@ -358,10 +350,20 @@ export async function readMemory(sessionID: string): Promise<MemoryFile> {
     // or through the v3 migration (which does not set them either).
     memory.notesInherited ??= []
     memory.inheritedDepth ??= memory.parentSnapshotFrom ? 1 : 0
+    // A legacy file may exceed the notes cap: normalize on read so every
+    // consumer sees the bounded shape (P2-4). capNotes is a no-op at ≤200.
+    capNotes(memory)
     recoverStaleAttempt(memory)
     return memory
   } catch (err: any) {
     if (err?.code === "ENOENT") return emptyMemory(id)
+    // Transient OS-level read failures (EACCES/EPERM while another process
+    // repairs permissions, EISDIR, ...) must not move the file aside: only a
+    // file that was READ but could not be PARSED is quarantined (P2-3).
+    if (err?.code === "EACCES" || err?.code === "EPERM" || err?.code === "EISDIR") {
+      logEvent("read-transient", { sid: id, code: String(err?.code) })
+      return emptyMemory(id)
+    }
     logEvent("quarantine", { sid: id })
     // corrupt recovery: keep the unreadable file aside instead of losing it
     try {
@@ -773,6 +775,25 @@ const V1_TOOL_PREFIX = /^(shell|bash|edit|write|patch|apply_patch|multiedit): /
  * Converts a v1 memory file to v2: conversation quotes stay, tool-derived turns become
  * activity entries, and the trivial tool noise is dropped.
  */
+/** Array-safe reads for legacy files: a malformed value normalizes to []
+ * instead of crashing the read into quarantine (P2-3). */
+function rawArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
+}
+
+function noteArray(value: unknown): MemoryNote[] {
+  return rawArray(value).map(normalizeNote).filter((n): n is MemoryNote => n !== null)
+}
+
+function turnArray(value: unknown): PendingTurn[] {
+  return rawArray(value)
+    .filter((t): t is PendingTurn => !!t && typeof t === "object" && typeof (t as any).turnId === "string")
+}
+
+function activityArray(value: unknown): unknown[] {
+  return rawArray(value).filter((a) => !!a && typeof a === "object")
+}
+
 export function migrateV2(v2: MemoryFileV2): MemoryFile {
   const summary = v2.summary ?? ""
   const consolidation = emptyConsolidation()
@@ -789,9 +810,9 @@ export function migrateV2(v2: MemoryFileV2): MemoryFile {
     summaryFacts: summary,
     summaryFactsInherited: "",
     summaryNarrative: "",
-    notes: v2.notes ?? [],
-    pendingTurns: (v2.pendingTurns ?? []).map(withTier),
-    pendingActivity: (v2.pendingActivity ?? []).map(normalizeActivityEntry),
+    notes: noteArray(v2.notes),
+    pendingTurns: turnArray(v2.pendingTurns).map(withTier),
+    pendingActivity: activityArray(v2.pendingActivity).map(normalizeActivityEntry),
     needsConsolidation: v2.needsConsolidation === true,
     consolidation,
     captureCounters: { always: 0, likely: 0, noiseSkipped: 0 },

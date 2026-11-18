@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test"
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs"
 import { randomUUID } from "node:crypto"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -456,5 +456,35 @@ describe("activity command inference", () => {
     const after = statSync(path)
     expect(after.ino).toBe(before.ino)
     expect((await readMemory(sid)).summary).toBe("kept")
+  })
+
+  test("an EACCES read does not quarantine the file (T4.3)", async () => {
+    const sid = "ses_eacces"
+    await updateMemory(sid, (m) => {
+      m.summary = "precious"
+    })
+    const path = memoryPath(sid)
+    // A transient OS-level read failure (another process repairing
+    // permissions, say): readFile fails with EACCES.
+    const fsp = await import("node:fs/promises")
+    const realReadFile = fsp.readFile
+    const spy = spyOn(fsp as any, "readFile").mockImplementation(async (p: any, ...rest: any[]) => {
+      if (String(p) === path) {
+        const err: any = new Error("permission denied")
+        err.code = "EACCES"
+        throw err
+      }
+      return realReadFile(p, ...rest)
+    })
+    try {
+      const m = await readMemory(sid)
+      // Returned empty for this read, but the file stays in place for a
+      // later (repaired) read — no quarantine rename.
+      expect(m.summary).toBe("")
+      expect(existsSync(path)).toBe(true)
+      expect(readdirSync(memoryDir()).filter((f) => f.includes(".corrupt."))).toHaveLength(0)
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test"
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { migrateV1, migrateV2, readMemory, memoryDir, type MemoryFileV1, type MemoryFileV2 } from "../src/storage"
@@ -329,5 +329,104 @@ describe("migration needsConsolidation coercion", () => {
     const migrated = migrateV2(v2)
     migrated.needsConsolidation = true
     expect(canConsolidate(migrated)).toBe(true)
+  })
+})
+
+describe("legacy hardening (T4.3)", () => {
+  let dir: string
+  let orig: string | undefined
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mem-"))
+    orig = process.env.XDG_DATA_HOME
+    process.env.XDG_DATA_HOME = dir
+  })
+
+  afterEach(() => {
+    if (orig === undefined) delete process.env.XDG_DATA_HOME
+    else process.env.XDG_DATA_HOME = orig
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("a malformed v3 file is normalized instead of quarantined", async () => {
+    mkdirSync(memoryDir(), { recursive: true })
+    const v3 = {
+      version: 3,
+      sessionID: "ses_v3bad",
+      parentSnapshotFrom: null,
+      build: "0.4.0",
+      summary: "prose survives",
+      summaryFacts: "- command: bun test",
+      summaryNarrative: "legacy narrative",
+      notes: { bad: "shape" }, // non-array
+      pendingTurns: "not-an-array", // non-array
+      pendingActivity: 42, // non-array
+      needsConsolidation: false,
+      consolidation: null, // malformed too
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }
+    writeFileSync(join(memoryDir(), "ses_v3bad.json"), JSON.stringify(v3))
+    const m = await readMemory("ses_v3bad")
+    // No quarantine: the original file stays in place, no .corrupt. rename.
+    expect(existsSync(join(memoryDir(), "ses_v3bad.json"))).toBe(true)
+    expect(readdirSync(memoryDir()).some((f) => f.includes(".corrupt."))).toBe(false)
+    // Safe normalization.
+    expect(m.notes).toEqual([])
+    expect(m.pendingTurns).toEqual([])
+    expect(m.pendingActivity).toEqual([])
+    expect(m.consolidation.state).toBe("idle")
+    // Legacy prose survives.
+    expect(m.summary).toBe("prose survives")
+    expect(m.summaryNarrative).toBe("legacy narrative")
+    expect(m.summaryFacts).toBe("- command: bun test")
+  })
+
+  test("a malformed v2 file is normalized instead of crashing", () => {
+    const migrated = migrateV2({
+      version: 2,
+      sessionID: "ses_v2bad",
+      parentSnapshotFrom: null,
+      summary: "kept",
+      notes: "bad",
+      pendingTurns: 7,
+      pendingActivity: {},
+      needsConsolidation: false,
+      lastAttemptAt: null,
+      lastSuccessAt: null,
+      lastFailure: null,
+      failureCount: 0,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    } as unknown as MemoryFileV2)
+    expect(migrated.notes).toEqual([])
+    expect(migrated.pendingTurns).toEqual([])
+    expect(migrated.pendingActivity).toEqual([])
+    expect(migrated.summaryFacts).toBe("kept")
+  })
+
+  test("300 legacy notes are capped to 200 on read", async () => {
+    mkdirSync(memoryDir(), { recursive: true })
+    const v3 = {
+      version: 3,
+      sessionID: "ses_v3cap",
+      parentSnapshotFrom: null,
+      build: "0.4.0",
+      summary: "",
+      summaryFacts: "",
+      summaryNarrative: "",
+      notes: Array.from({ length: 300 }, (_, i) => ({
+        id: `n${i}`, text: `note ${i}`, tags: [], createdAt: "2026-01-01T00:00:00.000Z",
+      })),
+      pendingTurns: [],
+      pendingActivity: [],
+      needsConsolidation: false,
+      consolidation: null,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }
+    writeFileSync(join(memoryDir(), "ses_v3cap.json"), JSON.stringify(v3))
+    const m = await readMemory("ses_v3cap")
+    expect(m.notes.length).toBe(200)
+    // The OLDEST are evicted: the last 200 survive.
+    expect(m.notes[0]?.id).toBe("n100")
+    expect(m.notes[199]?.id).toBe("n299")
   })
 })
