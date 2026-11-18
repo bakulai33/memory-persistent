@@ -185,6 +185,40 @@ the prohibition on storing raw tool output or secrets.
 - The build record (`build.json`) stores the source hash; drift between activations is
   reported via `memory_health` and the log.
 
+## Accepted limitations
+
+These trade-offs are deliberate; they are documented so reading the source never
+surprises you:
+
+- **No `fsync` on memory writes.** Writes are atomic (`tmp` file + rename) but not
+  flushed: on a hard power cut the newest write may be lost or left as a stale
+  `.tmp.` leftover (cleaned up by the sweep and the permission repair). Accepted:
+  this data is a session aid, not a ledger.
+- **Locks are per-process.** The session lock serializes writes within one OpenCode
+  process only. Two server processes on the same data directory could race; the
+  atomic rename and the in-file `sessionID` check keep a corrupt file from being
+  persisted, but last-writer-wins is possible. Accepted: in the supported setup a
+  single server owns the data directory.
+- **`sourceHash` covers `src/*.ts` only.** The build-record hash detects source drift
+  in the plugin's own modules, not in skill files or host changes; it is a
+  diagnostic, not a guarantee.
+- **Log writes are synchronous but not fsync'd.** `plugin.log` is appended
+  synchronously per event; a crash may lose the last lines. The log is a
+  diagnostic trail, not an audit log.
+- **Manual notes are capped at 200 per session.** The oldest notes are evicted when
+  the cap is exceeded (also applied when reading legacy files that exceed it).
+- **Tool payloads are bounded.** `memory_recall` / `memory_list` return previews of
+  at most 500 characters per note and a JSON payload capped at 32 KiB, with
+  `truncated` flags when something was cut.
+- **The selfcheck verifies the entry import graph, not types.** It proves every
+  named import resolves to a real export; it does not type-check (run `tsc` for
+  that) and it does not verify runtime behavior.
+- **Consolidation runs in the background.** The `experimental.idle` hook returns
+  immediately; consolidation runs as a plugin-scoped fiber, one per session.
+  Deleting a session interrupts its consolidation fiber and frees the slot; slow
+  model calls are protected from stale recovery while their fiber is alive
+  (registration TTL: 30 minutes).
+
 ## Storage & privacy
 
 - Memory lives locally under `${XDG_DATA_HOME:-~/.local/share}/opencode/memory-persistent/`:

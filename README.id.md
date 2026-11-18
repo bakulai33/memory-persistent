@@ -185,6 +185,40 @@ Lainnya: panjang > 120 **karakter** → `always`; greetings → `noise`; pendek 
 - Build record (`build.json`) mencatat source hash; drift antar aktivasi dilaporkan
   lewat `memory_health` dan log.
 
+## Limitasi yang diterima
+
+Ketimbang-trade-off berikut disengaja dan didokumentasikan agar membaca source tidak
+mengejutkan Anda:
+
+- **Tidak ada `fsync` pada penulisan memori.** Penulisan atomik (file `tmp` + rename)
+  tetapi tidak di-flush: saat mati daya total, tulisan terbaru bisa hilang atau
+  tersisa `.tmp.` usang (dibersihkan sweep dan perbaikan permission). Diterima:
+  data ini alat bantu sesi, bukan buku besar.
+- **Lock bersifat per-proses.** Lock sesi hanya menyerialisasi penulisan dalam satu
+  proses OpenCode. Dua proses server pada direktori data yang sama bisa berlomba;
+  rename atomik dan pemeriksaan `sessionID` di dalam file menjaga file agar tidak
+  rusak, tetapi last-writer-wins mungkin terjadi. Diterima: pada setup yang
+  didukung, satu server pemilik direktori data.
+- **`sourceHash` hanya mencakup `src/*.ts`.** Hash pada build record mendeteksi
+  drift source modul plugin sendiri, bukan file skill atau perubahan host; ini
+  diagnostik, bukan jaminan.
+- **Penulisan log sinkron tetapi tanpa fsync.** `plugin.log` di-append sinkron per
+  event; crash bisa menghilangkan baris terakhir. Log adalah jejak diagnostik,
+  bukan audit log.
+- **Notes manual dibatasi 200 per sesi.** Note paling lama dievakuasi saat batas
+  terlampaui (juga diterapkan saat membaca file legacy yang melampauinya).
+- **Payload tool dibatasi.** `memory_recall` / `memory_list` mengembalikan preview
+  maksimal 500 karakter per note dan payload JSON dibatasi 32 KiB, dengan flag
+  `truncated` saat ada yang dipotong.
+- **Selfcheck memverifikasi graph import entry, bukan tipe.** Ia membuktikan
+  setiap named import menunjuk export nyata; tidak melakukan type-check (jalankan
+  `tsc` untuk itu) dan tidak memverifikasi perilaku runtime.
+- **Konsolidasi berjalan di background.** Hook `experimental.idle` langsung kembali;
+  konsolidasi berjalan sebagai fiber ber-scope plugin, satu per sesi. Menghapus
+  sesi memutus fiber konsolidasinya dan membebaskan slot; panggilan model lambat
+  dilindungi dari recovery stale selama fiber-nya masih hidup (TTL registrasi:
+  30 menit).
+
 ## Penyimpanan & privasi
 
 - Memori tersimpan lokal di bawah
