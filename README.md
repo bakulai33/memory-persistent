@@ -204,7 +204,10 @@ surprises you:
   diagnostic, not a guarantee.
 - **Log writes are synchronous but not fsync'd.** `plugin.log` is appended
   synchronously per event; a crash may lose the last lines. The log is a
-  diagnostic trail, not an audit log.
+  diagnostic trail, not an audit log. A manual benchmark of the steady-state
+  path (`tools/log-bench.ts`, 500–1000 events) measured p95 ≈ 0.05–0.5 ms per
+  event — far inside the 5 ms budget that would have forced an async queue —
+  so synchronous logging stays.
 - **Manual notes are capped at 200 per session.** The oldest notes are evicted when
   the cap is exceeded (also applied when reading legacy files that exceed it).
 - **Tool payloads are bounded.** `memory_recall` / `memory_list` return previews of

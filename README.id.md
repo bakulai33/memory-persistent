@@ -204,7 +204,9 @@ mengejutkan Anda:
   diagnostik, bukan jaminan.
 - **Penulisan log sinkron tetapi tanpa fsync.** `plugin.log` di-append sinkron per
   event; crash bisa menghilangkan baris terakhir. Log adalah jejak diagnostik,
-  bukan audit log.
+  bukan audit log. Benchmark manual jalur steady-state (`tools/log-bench.ts`,
+  500–1000 event) mengukur p95 ≈ 0,05–0,5 ms per event — jauh di dalam anggaran
+  5 ms yang baru akan memaksa antrean async — jadi penulisan sinkron dipertahankan.
 - **Notes manual dibatasi 200 per sesi.** Note paling lama dievakuasi saat batas
   terlampaui (juga diterapkan saat membaca file legacy yang melampauinya).
 - **Payload tool dibatasi.** `memory_recall` / `memory_list` mengembalikan preview
