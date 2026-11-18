@@ -2,7 +2,7 @@ import { describe, test, expect, afterEach } from "bun:test"
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { checkSourceTree, checkSourceGraph, sourceHash } from "../src/selfcheck"
+import { checkSourceTree, checkSourceGraph, sourceHash, hardcodedHomePaths } from "../src/selfcheck"
 import { resolveSkillPath } from "../src/index"
 import { existsSync } from "node:fs"
 
@@ -120,6 +120,18 @@ describe("selfcheck CLI (T2.3)", () => {
     expect(out).toContain("./b.js")
     expect(out).toContain("b")
   })
+
+  test("exits non-zero when a src file carries a hardcoded home path (T4.8)", () => {
+    const dir = tree([
+      ["index.ts", 'export const run = 1\n'],
+      ["leak.ts", 'export const p = "/home/whoami/leak"\n'],
+    ])
+    const proc = Bun.spawnSync(["bun", "run", join(repo, "tools", "selfcheck.ts"), dir], { cwd: repo })
+    expect(proc.exitCode).not.toBe(0)
+    const out = new TextDecoder().decode(proc.stdout) + new TextDecoder().decode(proc.stderr)
+    expect(out).toContain("leak.ts")
+    expect(out).toContain("home path")
+  })
 })
 
 describe("sourceHash", () => {
@@ -163,6 +175,25 @@ test("the skill path is derived from the plugin location", () => {
   expect(HARDCODED_SAMPLE).toMatch(/\/home\/[A-Za-z0-9._-]+\//)
   const src = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf8")
   expect(src).not.toMatch(/\/home\/[A-Za-z0-9._-]+\//)
+})
+
+describe("hardcoded home path guard (T4.8)", () => {
+  test("a home path in ANY src file is caught, not just index.ts", () => {
+    const dir = tree([
+      ["storage.ts", 'export const p = "/home/maintainer/secret"\n'],
+      ["index.ts", 'import { p } from "./storage.js"\nexport const x = p\n'],
+    ])
+    expect(hardcodedHomePaths(dir)).toEqual(["storage.ts"])
+  })
+
+  test("the real plugin src is clean", () => {
+    expect(hardcodedHomePaths(SRC)).toEqual([])
+  })
+
+  test("a comment about the pattern is not a false positive", () => {
+    const dir = tree([["a.ts", "// Resolve relative to the module (not hard-coded /home/<user>/...)\n"]])
+    expect(hardcodedHomePaths(dir)).toEqual([])
+  })
 })
 
 describe("checkSourceTree: export forms and resolution", () => {

@@ -2,6 +2,34 @@ import { createHash } from "node:crypto"
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 
+/** Any absolute home path in the source is a leak of the maintainer's
+ * environment (P2-12): builds must stay portable. */
+const HOME_PATH_RE = /\/home\/[A-Za-z0-9._-]+\//
+
+/**
+ * Lists the `.ts` files of `srcDir` whose source contains a hardcoded
+ * `/home/<user>/` path. Empty result means the tree is clean.
+ */
+export function hardcodedHomePaths(srcDir: string): string[] {
+  let entries: string[]
+  try {
+    entries = readdirSync(srcDir)
+  } catch {
+    return []
+  }
+  const offenders: string[] = []
+  for (const name of entries.filter((file) => file.endsWith(".ts")).sort()) {
+    let source: string
+    try {
+      source = readFileSync(join(srcDir, name), "utf8")
+    } catch {
+      continue
+    }
+    if (HOME_PATH_RE.test(source)) offenders.push(name)
+  }
+  return offenders
+}
+
 /** A named import in the entry module whose target module does not export it. */
 export interface ImportMismatch {
   readonly importer: string
