@@ -46,3 +46,32 @@ describe("facts", () => {
     expect(a).toBe("- command: bun test (4x)")
   })
 })
+
+describe("single-word command facts (T4.4)", () => {
+  test("make berulang tercatat sebagai (2x)", () => {
+    // Two bare `make` invocations aggregate into one repeated fact: the
+    // repetition itself is the signal the model should remember.
+    const out = buildFacts(delta("- command: make\n- command: make"))
+    expect(out).toBe("- command: make (2x)")
+  })
+
+  test("single-word sekali tetap dibuang", () => {
+    // One bare invocation without a subcommand says nothing about WHAT ran.
+    expect(buildFacts(delta("- command: make"))).toBe("")
+  })
+
+  test("python3 polos tetap dibuang (regresi facts.test.ts:16)", () => {
+    const out = buildFacts(delta("- command: python3\n- command: make\n- command: make"))
+    expect(out).not.toContain("python3")
+    expect(out).toContain("- command: make (2x)")
+  })
+
+  test("idempoten lewat counter", () => {
+    const once = buildFacts(delta("- command: make (2x)"))
+    expect(buildFacts(delta(once))).toBe(once)
+  })
+
+  test("mergeFacts menyatukan make polos berulang", () => {
+    expect(mergeFacts("- command: make", "- command: make")).toBe("- command: make (2x)")
+  })
+})

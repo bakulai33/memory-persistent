@@ -657,11 +657,17 @@ function groupFacts(lines: string[], firstSeen: Map<string, number>): Map<string
     if (!parsed) continue
     const target = stripCounter(parsed.target)
     if (!isSaneTarget(parsed.kind, target)) continue
-    if (parsed.kind === "command" && !target.includes(" ")) continue
     const bucket = groups.get(parsed.kind)!
     const key = `${parsed.kind}\u0000${target}`
     if (!firstSeen.has(key)) firstSeen.set(key, order++)
     bucket.set(target, (bucket.get(target) ?? 0) + parsed.count)
+  }
+  // A bare single-word command records nothing about WHAT ran, so one
+  // invocation is noise — but the repetition itself carries signal
+  // (`make (2x)`) (T4.4). Aggregating first makes two one-off lines count.
+  const commands = groups.get("command")!
+  for (const [target, count] of commands) {
+    if (!target.includes(" ") && count <= 1) commands.delete(target)
   }
   return groups
 }

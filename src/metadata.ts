@@ -116,6 +116,8 @@ const GIT_VALUE_FLAGS = new Set([
 interface ShellCommandDetail {
   binary: string
   subcommand: string | null
+  /** Tokens after the subcommand: where branch mutations hide (T4.4). */
+  rest: string[]
 }
 
 function shellCommandDetails(command: string): ShellCommandDetail[] {
@@ -131,10 +133,12 @@ function shellCommandDetails(command: string): ShellCommandDetail[] {
     if (!binary) continue
     let cursor = index + 1
     let subcommand: string | null = null
+    let rest: string[] = []
     while (cursor < tokens.length) {
       const token = tokens[cursor]!
       if (!token.startsWith("-")) {
         subcommand = token
+        rest = tokens.slice(cursor + 1)
         break
       }
       if (token.includes("=")) {
@@ -156,13 +160,45 @@ function shellCommandDetails(command: string): ShellCommandDetail[] {
       }
       cursor += 1
     }
-    details.push({ binary, subcommand })
+    details.push({ binary, subcommand, rest })
   }
   return details
 }
 
 export function parseShellCommands(command: string): string[] {
   return shellCommandDetails(command).map((detail) => detail.binary)
+}
+
+/** Flags that mutate branches: delete, rename, copy, force, set-upstream. */
+const GIT_BRANCH_MUTATING_FLAG =
+  /^(--delete|--move|--copy|--edit-description|--set-upstream|--unset-upstream|--force|-[dDmMcCfu])(=.*)?$/
+
+/** Listing flags whose following token is a value (a pattern), not a branch name. */
+const GIT_BRANCH_LIST_VALUE_FLAGS = new Set([
+  "--list", "--points-at", "--sort", "--format", "--contains", "--no-contains",
+  "--merged", "--no-merged", "--column",
+])
+
+/**
+ * `git branch` mutates the repo when it deletes, renames, copies, force-
+ * updates or creates a branch; only a pure listing is read-only (T4.4).
+ */
+function mutatingGitBranch(tokens: string[]): boolean {
+  let skipValue = false
+  for (const token of tokens) {
+    if (skipValue) {
+      skipValue = false
+      continue
+    }
+    if (GIT_BRANCH_MUTATING_FLAG.test(token)) return true
+    if (GIT_BRANCH_LIST_VALUE_FLAGS.has(token)) {
+      skipValue = true
+      continue
+    }
+    // A bare branch name: the create/rename/delete target.
+    if (!token.startsWith("-")) return true
+  }
+  return false
 }
 
 function toolError(event: { status?: string; error?: unknown }): string | undefined {
@@ -239,7 +275,12 @@ export function classifyToolCall(
         const binary = detail.binary
         if (!SHELL_ALLOW.has(binary)) continue
         if (READONLY_COMMANDS.has(binary)) continue
-        if (binary === "git" && detail.subcommand !== null && READONLY_GIT_SUBCOMMANDS.has(detail.subcommand)) continue
+        if (binary === "git" && detail.subcommand !== null && READONLY_GIT_SUBCOMMANDS.has(detail.subcommand)) {
+          // Every read-only subcommand only reads refs, whatever its
+          // arguments — except `git branch`, which mutates when it deletes,
+          // renames, copies or creates a branch (T4.4).
+          if (detail.subcommand !== "branch" || !mutatingGitBranch(detail.rest)) continue
+        }
         const target = detail.subcommand ? `${binary} ${detail.subcommand}` : binary
         result.push({ kind: "command", target: redactActivityTarget("command", target), command: binary, turnID })
       }

@@ -274,4 +274,29 @@ describe("redact patterns", () => {
     const input = "the token is expired"
     expect(redact(input)).toBe(input)
   })
+
+  test("records a mutating git branch (T4.4)", () => {
+    expect(classifyToolCall("shell", { command: "git branch -D old-feature" }, { status: "completed" })).toEqual([
+      { kind: "command", target: "git branch", command: "git", turnID: undefined },
+    ])
+    // Creating a branch mutates the repo too.
+    expect(classifyToolCall("shell", { command: "git branch feature-x" }, { status: "completed" })).toEqual([
+      { kind: "command", target: "git branch", command: "git", turnID: undefined },
+    ])
+    expect(classifyToolCall("shell", { command: "git branch -m old new" }, { status: "completed" })).toEqual([
+      { kind: "command", target: "git branch", command: "git", turnID: undefined },
+    ])
+  })
+
+  test("a git branch listing stays dropped (T4.4)", () => {
+    expect(classifyToolCall("shell", { command: "git branch" }, { status: "completed" })).toEqual([])
+    expect(classifyToolCall("shell", { command: "git branch -a" }, { status: "completed" })).toEqual([])
+    expect(classifyToolCall("shell", { command: "git branch --list 'feat/*'" }, { status: "completed" })).toEqual([])
+    expect(classifyToolCall("shell", { command: "git branch --sort=-committerdate" }, { status: "completed" })).toEqual([])
+  })
+
+  test("other read-only git subcommands stay dropped regardless of args (T4.4)", () => {
+    expect(classifyToolCall("shell", { command: "git show HEAD" }, { status: "completed" })).toEqual([])
+    expect(classifyToolCall("shell", { command: "git log --oneline -5" }, { status: "completed" })).toEqual([])
+  })
 })
