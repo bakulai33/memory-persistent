@@ -1,8 +1,18 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test"
+import { existsSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { readMemory, updateMemory, addActivity, type PendingTurn } from "../src/storage"
+import {
+  readMemory,
+  updateMemory,
+  addActivity,
+  writeMemory,
+  deleteMemoryFiles,
+  markDeleted,
+  memoryPath,
+  emptyMemory,
+  type PendingTurn,
+} from "../src/storage"
 import { appendNote } from "../src/memory"
 
 async function storeNote(sid: string, text: string) {
@@ -85,5 +95,54 @@ describe("concurrency", () => {
     )
     const m = await readMemory(sid)
     expect(m.pendingActivity.length).toBe(6)
+  })
+
+  test("a delete during an in-flight write does not resurrect the file (T3.1)", async () => {
+    const sid = "ses_delrace"
+    // A file on disk so the delete has something to remove.
+    await updateMemory(sid, (m) => {
+      m.summary = "first"
+    })
+    const path = memoryPath(sid)
+    expect(existsSync(path)).toBe(true)
+
+    // Stall the atomic write inside writeFile(tmp): the tombstone check at the
+    // top of the write has already passed, so a delete racing NOW is the bug.
+    const fsp = await import("node:fs/promises")
+    const realWriteFile = fsp.writeFile
+    let stall!: () => void
+    const stalled = new Promise<void>((r) => {
+      stall = r
+    })
+    let entered = 0
+    const spy = spyOn(fsp as any, "writeFile").mockImplementation(async (p: any, data: any, opts: any) => {
+      if (String(p).includes(".tmp.")) {
+        entered++
+        await stalled
+        return realWriteFile(p, data, opts)
+      }
+      return realWriteFile(p, data, opts)
+    })
+    try {
+      // Holds the session lock. The wait proves the write is stalled INSIDE
+      // writeFile(tmp) — i.e. the tombstone check at the top already passed.
+      const writer = writeMemory(sid, { ...(await readMemory(sid)), summary: "late write" })
+      for (let i = 0; i < 500 && entered === 0; i++) await new Promise((r) => setTimeout(r, 5))
+      expect(entered).toBe(1)
+      markDeleted(sid)
+      const deleter = deleteMemoryFiles(sid)
+      // The unfixed delete is not lock-guarded, so it finishes long before the
+      // rename resumes; waiting for it (bounded) makes the race deterministic.
+      // The fixed delete queues behind the writer instead — the timeout only
+      // bounds that wait.
+      await Promise.race([deleter, new Promise((r) => setTimeout(r, 250))])
+      stall()
+      await writer
+      await deleter
+      // The late rename must not resurrect the deleted session's file.
+      expect(existsSync(path)).toBe(false)
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

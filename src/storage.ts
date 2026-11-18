@@ -388,6 +388,14 @@ async function writeMemoryUnlocked(sessionID: string, memory: MemoryFile): Promi
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const tmp = `${path}.tmp.${process.pid}.${Date.now()}.${randomUUID()}`
   await writeFile(tmp, JSON.stringify(memory, null, 2), { encoding: "utf8", mode: 0o600 })
+  // A session can be deleted while this write was in flight (P1-6): the
+  // tombstone is re-checked at the last moment, so the rename cannot
+  // resurrect a deleted file. The staged tmp is removed instead.
+  if (isDeleted(id)) {
+    await rm(tmp, { force: true }).catch(() => {})
+    logEvent("write-skipped-deleted", { sid: id })
+    return
+  }
   await rename(tmp, path)
   try {
     await chmod(path, 0o600)
@@ -503,19 +511,23 @@ export function buildSnapshot(parent: MemoryFile, toSessionID: string): MemoryFi
 /** Removes the memory file of a session and any corrupt backups left beside it. */
 export async function deleteMemoryFiles(sessionID: string): Promise<void> {
   const id = sanitizeSessionID(sessionID)
-  const dir = memoryDir()
-  let entries: string[]
-  try {
-    entries = await readdir(dir)
-  } catch {
-    return
-  }
-  const targets = entries.filter((entry) => entry === `${id}.json` || entry.startsWith(`${id}.json.corrupt.`))
-  for (const target of targets) {
+  // Deleting under the session lock serializes with an in-flight write
+  // (P1-6): the rename of a stalled write can no longer land after the rm.
+  await withLock(id, async () => {
+    const dir = memoryDir()
+    let entries: string[]
     try {
-      await rm(join(dir, target), { force: true })
-    } catch {}
-  }
+      entries = await readdir(dir)
+    } catch {
+      return
+    }
+    const targets = entries.filter((entry) => entry === `${id}.json` || entry.startsWith(`${id}.json.corrupt.`))
+    for (const target of targets) {
+      try {
+        await rm(join(dir, target), { force: true })
+      } catch {}
+    }
+  })
 }
 
 /**
