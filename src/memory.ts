@@ -180,7 +180,18 @@ export function buildInjection(memory: MemoryFile, budget = 5000): string {
   } else if (memory.summary) {
     summaryCore = capTextByChars(memory.summary, chars, "head")
   }
-  const summary = summaryCore ? `Summary:\n${summaryCore}` : ""
+  // A failed (or recovered-stale) consolidation means the summary above is
+  // older than the pending conversation: flag it so the model does not trust
+  // the summary blindly (T4.6). The warning rides INSIDE the summary section
+  // (right after the label) so it survives head-truncation and shares the
+  // section budget instead of distorting the allocation math.
+  const staleWarning =
+    memory.consolidation.state === "failed"
+      ? `Warning: the last consolidation failed${
+          memory.consolidation.error ? ` (${memory.consolidation.error})` : ""
+        } — the summary may be out of date.`
+      : ""
+  const summary = summaryCore || staleWarning ? `Summary:\n${[staleWarning, summaryCore].filter(Boolean).join("\n")}` : ""
   const conversation = memory.pendingTurns.length
     ? `Conversation:\n${capLinesByChars(memory.pendingTurns.map((t) => `- ${t.userExcerpt}`), chars, "head").join("\n")}`
     : ""

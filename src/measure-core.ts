@@ -108,7 +108,6 @@ export function buildMeasureReport(sessionsDir: string): MeasureReport {
   }
 
   const now = Date.now()
-  const lineCounts = new Map<string, number>()
   let genericLines = 0
   let totalLines = 0
 
@@ -155,10 +154,17 @@ export function buildMeasureReport(sessionsDir: string): MeasureReport {
     report.facts.ownLines += own.length
     report.facts.inheritedLines += inherited.length
 
+    // Duplicates are counted PER FILE (T4.6): the same line recurring inside
+    // one session's own+inherited chain is that file's duplication problem;
+    // a shared line across two sessions is just two sessions' normal history.
+    const fileCounts = new Map<string, number>()
     for (const line of [...own, ...inherited]) {
       totalLines++
       if (GENERIC_FACT_RE.test(line)) genericLines++
-      lineCounts.set(line, (lineCounts.get(line) ?? 0) + 1)
+      fileCounts.set(line, (fileCounts.get(line) ?? 0) + 1)
+    }
+    for (const count of fileCounts.values()) {
+      if (count > 1) report.facts.dupLines += count - 1
     }
 
     report.pending.turns += arrayLength(raw.pendingTurns)
@@ -168,11 +174,6 @@ export function buildMeasureReport(sessionsDir: string): MeasureReport {
   }
 
   report.facts.genericPct = totalLines > 0 ? Math.round((genericLines / totalLines) * 100) : 0
-  let dupLines = 0
-  for (const count of lineCounts.values()) {
-    if (count > 1) dupLines += count - 1
-  }
-  report.facts.dupLines = dupLines
 
   return report
 }

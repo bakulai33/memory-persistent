@@ -88,8 +88,10 @@ describe("buildMeasureReport", () => {
     expect(report.facts.ownLines).toBe(3)
     expect(report.facts.inheritedLines).toBe(3)
     expect(report.facts.genericPct).toBe(83)
-    // Two lines appear twice (own vs inherited copy), so two extra occurrences.
-    expect(report.facts.dupLines).toBe(2)
+    // Duplicates are counted PER FILE (T4.6): only alpha repeats
+    // "- file: /tmp/proj/a.ts" (own vs inherited copy). The bun-test line
+    // repeats across files, which is a different session's normal chain.
+    expect(report.facts.dupLines).toBe(1)
 
     expect(report.pending).toEqual({ turns: 3, activity: 3 })
     expect(report.notes).toEqual({ own: 2, inherited: 1 })
@@ -114,6 +116,18 @@ describe("buildMeasureReport", () => {
   test("an empty directory yields an empty report", () => {
     const dir = tmpSessions()
     expect(buildMeasureReport(dir)).toEqual(buildMeasureReport(join(dir, "nope")))
+  })
+
+  test("dupLines counts repeats within a file, not across files (T4.6)", () => {
+    const dir = tmpSessions()
+    writeSession(dir, "fixture-dup", {
+      summaryFacts: "- command: bun test\n- command: bun test\n- command: bun test",
+    })
+    // The same line in a DIFFERENT session file is that session's own chain,
+    // not a duplication problem.
+    writeSession(dir, "fixture-fresh", { summaryFacts: "- command: bun test" })
+    const report = buildMeasureReport(dir)
+    expect(report.facts.dupLines).toBe(2)
   })
 
   test("hygiene detects loose permissions, corrupt backups and stale tmp files", () => {

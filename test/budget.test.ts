@@ -21,6 +21,37 @@ import { beginAttempt } from "../src/consolidation"
 import { collectDelta } from "../src/memory"
 import { logPath } from "../src/log"
 
+describe("consolidation warning in the injection (T4.6)", () => {
+  test("a failed consolidation is flagged with its error", () => {
+    const m = emptyMemory("ses_warn_fail")
+    m.summaryFacts = "- command: bun test"
+    m.consolidation.state = "failed"
+    m.consolidation.error = "boom"
+    const out = buildInjection(m, 500)
+    expect(out).toContain("last consolidation failed")
+    expect(out).toContain("boom")
+  })
+
+  test("a stale attempt reads as failed and is flagged (T4.6)", () => {
+    // recoverStaleAttempt marks a timed-out attempt "stale attempt (timeout)";
+    // the injection must surface it so the model knows the summary is old.
+    const m = emptyMemory("ses_warn_stale")
+    m.summaryFacts = "- command: bun test"
+    m.consolidation.state = "failed"
+    m.consolidation.error = "stale attempt (timeout)"
+    const out = buildInjection(m, 500)
+    expect(out).toContain("last consolidation failed")
+    expect(out).toContain("stale attempt")
+  })
+
+  test("a healthy memory carries no warning", () => {
+    const m = emptyMemory("ses_warn_ok")
+    m.summaryFacts = "- command: bun test"
+    const out = buildInjection(m, 500)
+    expect(out).not.toContain("Warning")
+  })
+})
+
 describe("B1 own wins, inherited per-block truncated (Task 3.3)", () => {
   test("own facts survive; inherited truncated from head under small budget (B1)", () => {
     const m = emptyMemory("ses_own")
