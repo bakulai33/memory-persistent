@@ -649,6 +649,12 @@ export default define({
           }
         })
       }),
+      // A dead subscription stream would stop lifecycle processing with no
+      // trace at all: log the failure so it is visible. The startup and
+      // periodic sweeps remain the safety net for missed events.
+      Effect.catchCause((cause) =>
+        Effect.sync(() => logEvent("event-stream-failed", { error: Cause.pretty(cause) })),
+      ),
       Effect.forkScoped({ startImmediately: true }),
     )
   }),

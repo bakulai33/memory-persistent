@@ -746,6 +746,19 @@ describe("plugin (tools, hooks, events)", () => {
     expect(existsSync(join(memoryDir(), "ses_fk2.json"))).toBe(false)
   })
 
+  test("a failed event stream is logged, not silent (T3.3)", async () => {
+    const { ctx } = mockContext("ses_streamfail")
+    // The subscription itself dies: without a catch, the lifecycle events
+    // would stop being processed with no trace at all.
+    ctx.event.subscribe = () => Stream.fail(new Error("event bus gone")) as any
+    await activateHeld(ctx)
+    // The failure must be logged (and the plugin must not crash: activation
+    // above resolved, and this very assertion runs afterwards).
+    const logFile = join(dir, "opencode", "memory-persistent", "plugin.log")
+    await waitFor(() => existsSync(logFile) && readFileSync(logFile, "utf8").includes("event-stream-failed"))
+    expect(readFileSync(logFile, "utf8")).toContain("event bus gone")
+  })
+
   test("build.json is replaced atomically: a rewrite gets a new inode and leaves no tmp leftover", async () => {
     const ctx1 = mockContext("ses_atomic1").ctx
     await activateHeld(ctx1)
