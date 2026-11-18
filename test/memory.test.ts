@@ -366,6 +366,15 @@ describe("memory", () => {
     expect(validateStoreInput("ok", ["x".repeat(65)])).toBe("Rejected: invalid tag")
     expect(validateStoreInput("ok", ["bad\u0000tag"])).toBe("Rejected: invalid tag")
   })
+
+  test("storeMenolakTagBukanArray (T4.1)", () => {
+    expect(validateStoreInput("ok", "x")).toBe("Rejected: tags must be an array")
+    expect(validateStoreInput("ok", 42)).toBe("Rejected: tags must be an array")
+    expect(validateStoreInput("ok", { a: 1 })).toBe("Rejected: tags must be an array")
+    // Omitted tags stay valid — the store coerces them to [] at the append site.
+    expect(validateStoreInput("ok", undefined)).toBeNull()
+    expect(validateStoreInput("ok", null)).toBeNull()
+  })
 })
 
 describe("B1b fallback & B2 depth labels (Task 3.3)", () => {

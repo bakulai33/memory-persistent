@@ -779,7 +779,13 @@ export function validateStoreInput(text: unknown, tags: unknown): string | null 
   const trimmed = typeof text === "string" ? text.trim() : ""
   if (!trimmed) return "Rejected: text is empty"
   if (trimmed.length > 8192) return "Rejected: text too long (max 8 KB)"
-  if (!Array.isArray(tags)) return null
+  if (!Array.isArray(tags)) {
+    // Omitted tags stay valid (the store coerces them to [] at the append
+    // site); an explicit wrong type is rejected so the caller fixes its
+    // call shape (P2-1).
+    if (tags !== undefined && tags !== null) return "Rejected: tags must be an array"
+    return null
+  }
   if (tags.length > 16) return "Rejected: too many tags (max 16)"
   for (const tag of tags) {
     if (typeof tag !== "string") return "Rejected: invalid tag"
