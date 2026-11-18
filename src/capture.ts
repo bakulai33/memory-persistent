@@ -17,8 +17,33 @@ const MEMORY_MENTION = "@memory-persistent"
 /** A source or config file extension, so a prompt that names a file is kept. */
 const FILE_EXTENSION_RE = /\.(?:ts|js|tsx|jsx|py|go|rs|java|md|json|ya?ml)\b/i
 
-/** A slash is the other half of the path signal: "src/parser" names a file too. */
-const PATH_SEPARATOR = "/"
+/**
+ * A lone slash is NOT the path signal: "and/or", "yes/no" are phrases, not
+ * files (P2-6). A token counts as path-like when it is anchored (/abs, ~/,
+ * ./, ../) or when one of its segments carries file shape — a dot, a digit,
+ * an underscore or a hyphen, or it names a common source directory.
+ */
+const ANCHORED_PATH_RE = /^(?:\/|~\/|\.\.?\/)/
+
+/** Directory segments that make "src/x" read as a path, not a phrase. */
+const COMMON_SOURCE_DIRS = new Set([
+  "src", "lib", "app", "bin", "test", "tests", "docs", "tools", "scripts",
+  "config", "components", "utils", "packages", "plugins", "skills", "api",
+  "assets", "styles", "build", "dist", "cmd", "internal", "pkg", "public",
+  "server", "client", "hooks", "types",
+])
+
+function pathLikeToken(token: string): boolean {
+  if (ANCHORED_PATH_RE.test(token)) return true
+  if (!token.includes("/")) return false
+  return token.split("/").some(
+    (segment) => segment.includes(".") || /[0-9_-]/.test(segment) || COMMON_SOURCE_DIRS.has(segment.toLowerCase()),
+  )
+}
+
+function looksLikePath(text: string): boolean {
+  return text.split(/\s+/).some(pathLikeToken)
+}
 
 /** English decision/error/work-order markers, matched with word boundaries (prevents FP like "shoulders"). */
 const ALWAYS_EN_WORD = [
@@ -77,7 +102,7 @@ export function capturePolicy(text: string): CaptureTier {
   const lower = trimmed.toLowerCase()
   if (lower.includes(MEMORY_MENTION)) return "always"
   if (FILE_EXTENSION_RE.test(trimmed)) return "always"
-  if (trimmed.includes(PATH_SEPARATOR)) return "always"
+  if (looksLikePath(trimmed)) return "always"
   if (trimmed.length > LONG_PROMPT) return "always"
   if (EN_WORD_RE.test(lower)) return "always"
   if (PREFIX_RE.test(lower)) return "always"

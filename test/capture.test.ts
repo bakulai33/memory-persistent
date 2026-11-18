@@ -98,6 +98,28 @@ describe("capture policy", () => {
   })
 })
 
+describe("slash narrowing (T4.5)", () => {
+  test("a slash between ordinary words is not a path signal", () => {
+    // "and/or", "yes/no" are phrases, not files: a lone slash must not
+    // force the always tier (P2-6).
+    for (const text of ["and/or", "yes/no", "true/false", "baik/buruk"]) {
+      expect(`${text}:${capturePolicy(text)}`).not.toMatch(/:always$/)
+    }
+  })
+
+  test("path-like tokens stay always", () => {
+    // A common directory segment still reads as a path.
+    expect(capturePolicy("src/x")).toBe("always")
+    expect(capturePolicy("cek src/plugins dulu")).toBe("always")
+    expect(capturePolicy("module utils/helpers")).toBe("always")
+    // Anchored and shaped tokens stay paths regardless of the directory list.
+    expect(capturePolicy("lihat /etc/hosts")).toBe("always")
+    expect(capturePolicy("buka ~/proj/notes.md")).toBe("always")
+    expect(capturePolicy("edit ./config/app.json")).toBe("always")
+    expect(capturePolicy("perbaiki test/foo-1")).toBe("always")
+  })
+})
+
 describe("capture policy on the labeled set", () => {
   test("the labeled set holds a hundred cases", () => {
     expect(labeled.length).toBe(100)
