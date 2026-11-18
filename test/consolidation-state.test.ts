@@ -4,12 +4,15 @@ import {
   emptyConsolidation,
   backoffMs,
   beginAttempt,
+  deltaAttemptId,
+  activeAttemptAt,
   finishSuccess,
   finishFailure,
   recoverStaleAttempt,
   retryDelayMs,
   canConsolidate,
 } from "../src/consolidation"
+import { addPendingTurn, applyDelta, collectDelta } from "../src/memory"
 
 describe("consolidation state", () => {
   test("emptyConsolidation", () => {
@@ -68,10 +71,16 @@ describe("consolidation state", () => {
 
   test("recoverStaleAttempt stale", () => {
     const m = emptyMemory("s1")
-    beginAttempt(m, "idA", Date.now() - 6 * 60_000)
+    // A FOREIGN attempt: written by another process, never registered in this
+    // one — so recovery must mark it stale (T2.4 protects registered
+    // in-process attempts instead; see the registry tests below).
+    m.consolidation.state = "running"
+    m.consolidation.attemptId = "foreign"
+    m.consolidation.startedAt = new Date(Date.now() - 6 * 60_000).toISOString()
     const ok = recoverStaleAttempt(m, Date.now())
     expect(ok).toBe(true)
-    expect(m.consolidation.state).toBe("failed")
+    const state: string = m.consolidation.state
+    expect(state).toBe("failed")
     expect(m.consolidation.consecutiveFailures).toBe(1)
   })
 
@@ -118,5 +127,95 @@ describe("consolidation state", () => {
     const wait = retryDelayMs(m)
     expect(Number.isFinite(wait)).toBe(true)
     expect(canConsolidate(m)).toBe(true)
+  })
+})
+
+describe("active attempt registry (T2.4)", () => {
+  test("beginAttempt registers the attempt; finishing deletes it", () => {
+    const m = emptyMemory("ses_reg")
+    const id = deltaAttemptId()
+    beginAttempt(m, id, 1_000_000)
+    expect(activeAttemptAt(id)).toBe(1_000_000)
+    expect(finishSuccess(m, id, 1_000_001)).toBe(true)
+    expect(activeAttemptAt(id)).toBeNull()
+  })
+
+  test("finishFailure deletes the registration too", () => {
+    const m = emptyMemory("ses_reg_fail")
+    const id = deltaAttemptId()
+    beginAttempt(m, id, 1_000_000)
+    expect(finishFailure(m, id, "boom", 1_000_001)).toBe(true)
+    expect(activeAttemptAt(id)).toBeNull()
+  })
+
+  test("a failed attempt without finish does not keep a permanent entry", () => {
+    const lost = deltaAttemptId()
+    beginAttempt(emptyMemory("ses_orphan_a"), lost, 0)
+    // A later begin prunes registrations older than the TTL: a fiber that
+    // died mid-run (crash) must not protect its attempt forever.
+    const fresh = deltaAttemptId()
+    beginAttempt(emptyMemory("ses_orphan_b"), fresh, 31 * 60_000)
+    expect(activeAttemptAt(lost)).toBeNull()
+    expect(activeAttemptAt(fresh)).toBe(31 * 60_000)
+  })
+
+  test("a live in-process attempt survives stale recovery (slow model kept)", () => {
+    const m = emptyMemory("ses_slow")
+    const id = deltaAttemptId()
+    beginAttempt(m, id, 1_000_000)
+    // 6 minutes later: past the 5 min running timeout, but the fiber is alive.
+    expect(recoverStaleAttempt(m, 1_000_000 + 6 * 60_000)).toBe(false)
+    expect(m.consolidation.state).toBe("running")
+    expect(m.consolidation.attemptId).toBe(id)
+  })
+
+  test("an unregistered stale attempt is recovered after the registration TTL", () => {
+    const m = emptyMemory("ses_zombie")
+    const id = deltaAttemptId()
+    beginAttempt(m, id, 0)
+    // Simulate the fiber dying with the process: the TTL prunes the entry.
+    beginAttempt(emptyMemory("ses_zombie_b"), deltaAttemptId(), 31 * 60_000)
+    expect(recoverStaleAttempt(m, 31 * 60_000)).toBe(true)
+    expect(m.consolidation.state).toBe("failed")
+    expect(m.consolidation.error).toBe("stale attempt (timeout)")
+    expect(m.consolidation.attemptId).toBeNull()
+  })
+})
+
+describe("stale apply guard (T2.4)", () => {
+  test("a live attempt applies its narrative despite the slow model call", () => {
+    const m = emptyMemory("ses_live_apply")
+    m.needsConsolidation = true
+    addPendingTurn(m, { turnId: "t1", messageID: "m1", userExcerpt: "hello", createdAt: "" })
+    const delta = collectDelta(m)
+    beginAttempt(m, delta.attemptId!, 1_000_000)
+    expect(recoverStaleAttempt(m, 1_000_000 + 6 * 60_000)).toBe(false)
+    expect(applyDelta(m, delta, "fresh narrative")).toBe(true)
+    expect(m.summaryNarrative).toBe("fresh narrative")
+    expect(m.pendingTurns).toEqual([])
+    expect(m.needsConsolidation).toBe(false)
+  })
+
+  test("a stale apply is a no-op returning false and keeps needsConsolidation", () => {
+    const m = emptyMemory("ses_stale_apply")
+    m.needsConsolidation = true
+    addPendingTurn(m, { turnId: "t1", messageID: "m1", userExcerpt: "hello", createdAt: "" })
+    const delta = collectDelta(m)
+    beginAttempt(m, delta.attemptId!, 0)
+    // Another writer recovers the stale attempt before our apply lands.
+    beginAttempt(emptyMemory("ses_stale_b"), deltaAttemptId(), 31 * 60_000)
+    expect(recoverStaleAttempt(m, 31 * 60_000)).toBe(true)
+    expect(applyDelta(m, delta, "late narrative")).toBe(false)
+    expect(m.summaryNarrative).not.toBe("late narrative")
+    expect(m.pendingTurns.map((t) => t.turnId)).toEqual(["t1"])
+    expect(m.needsConsolidation).toBe(true)
+  })
+
+  test("an apply for a superseded attemptId is rejected", () => {
+    const m = emptyMemory("ses_mismatch")
+    m.needsConsolidation = true
+    const delta = collectDelta(m)
+    expect(applyDelta(m, { ...delta, attemptId: "superseded" }, "late")).toBe(false)
+    expect(m.needsConsolidation).toBe(true)
   })
 })

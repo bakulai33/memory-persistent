@@ -180,8 +180,9 @@ export function buildHealthReport(
   const now = options.now ?? Date.now()
   const fileBuild = fileBuildOf(m)
   const last = options.lastConsolidation === undefined ? null : options.lastConsolidation
-  // A retry is pending only while the backoff has not elapsed yet.
-  const delay = m.needsConsolidation ? retryDelayMs(m, now) : 0
+  // A retry is pending only while the backoff has not elapsed yet, and never
+  // while a consolidation is running: the running attempt owns the work (P1-4).
+  const delay = m.needsConsolidation && m.consolidation.state !== "running" ? retryDelayMs(m, now) : 0
 
   return {
     build: running.build,

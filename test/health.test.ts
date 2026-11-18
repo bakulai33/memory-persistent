@@ -14,6 +14,7 @@ import {
 import { logEvent, logPath } from "../src/log"
 import { addActivity, emptyMemory, type MemoryFile } from "../src/storage"
 import { addPendingTurn } from "../src/memory"
+import { beginAttempt, deltaAttemptId } from "../src/consolidation"
 import { writeMemory, readMemory } from "../src/storage"
 import plugin from "../src/index"
 
@@ -82,6 +83,15 @@ describe("health report", () => {
     const now = Date.parse(memory.consolidation.lastAttemptAt!) + 1_000
     const report = buildHealthReport(memory, RUNNING, { now })
     expect(report.consolidation.nextRetryInMs).toBe(119_000)
+  })
+
+  test("nextRetryInMs is null while a consolidation is running (T2.4)", () => {
+    const memory = emptyMemory("ses_running")
+    memory.needsConsolidation = true
+    beginAttempt(memory, deltaAttemptId(), Date.now() - 4 * 60_000)
+    const report = buildHealthReport(memory, RUNNING)
+    expect(report.consolidation.state).toBe("running")
+    expect(report.consolidation.nextRetryInMs).toBeNull()
   })
 
   test("the consolidation section mirrors the memory file", () => {

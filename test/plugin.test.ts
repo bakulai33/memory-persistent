@@ -679,6 +679,33 @@ describe("plugin (tools, hooks, events)", () => {
     })
   })
 
+  test("a stale consolidation logs 'consolidation stale', never 'ok'", async () => {
+    const scoped = mockContext("ses_stalelog")
+    scoped.ctx.options = { consolidationMode: "session" }
+    // The competing writer invalidates the attempt while the model call is in
+    // flight, exactly like another process finishing the same session first.
+    scoped.ctx.session.generate = () =>
+      Effect.promise(async () => {
+        const fresh = await readMemory("ses_stalelog")
+        fresh.consolidation.attemptId = null
+        await writeMemory("ses_stalelog", fresh)
+        return { text: "late summary" } as any
+      }) as any
+    const m = emptyMemory("ses_stalelog")
+    m.pendingActivity = Array.from({ length: 8 }, (_, i) => ({
+      id: `a${i}`, kind: "command", target: `git commit ${i}`, command: "git", count: 1, createdAt: "",
+    }))
+    m.needsConsolidation = true
+    await writeMemory("ses_stalelog", m)
+
+    await withHeldScope(scoped.ctx, async () => {
+      await runHook(scoped.hooks["experimental.idle"], { sessionID: "ses_stalelog", background: [] })
+      const logFile = join(dir, "opencode", "memory-persistent", "plugin.log")
+      await waitFor(() => existsSync(logFile) && readFileSync(logFile, "utf8").includes("consolidation stale"))
+      expect(readFileSync(logFile, "utf8")).not.toContain("consolidation ok")
+    })
+  })
+
   test("malformed lifecycle events are swallowed", async () => {
     const { ctx } = mockContext("ses_life", [
       { type: "session.deleted", data: { sessionID: "bad/id" } },   // sanitize throws -> catch

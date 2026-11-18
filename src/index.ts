@@ -26,6 +26,7 @@ import {
   loadMemory,
   defaultConsolidationMode,
   estimatePromptTokens,
+  isRetryableError,
   retryOnce,
   validateStoreInput,
 } from "./memory.js"
@@ -463,17 +464,22 @@ export default define({
                   onFirstFailure: (error: string) => void,
                 ): Promise<string> => {
                   let first = true
-                  return retryOnce(async () => {
-                    try {
-                      return await run()
-                    } catch (err) {
-                      if (first) {
-                        first = false
-                        onFirstFailure(err instanceof Error ? err.message : String(err))
+                  return retryOnce(
+                    async () => {
+                      try {
+                        return await run()
+                      } catch (err) {
+                        if (first) {
+                          first = false
+                          onFirstFailure(err instanceof Error ? err.message : String(err))
+                        }
+                        throw err
                       }
-                      throw err
-                    }
-                  })
+                    },
+                    // Only transient faults (network/timeout/5xx) are retried;
+                    // 429, quota and auth errors need a human (P1-5).
+                    isRetryableError,
+                  )
                 }
 
                 if (consolidationMode === "session") {
@@ -501,15 +507,21 @@ export default define({
             },
             apply: async (delta, narrative) => {
               const error = narrative.trim() ? null : (narrativeError ?? "model returned no narrative")
-              await updateMemory(sessionID, (m) => {
-                applyDelta(m, delta, narrative, budget)
-                if (error === null) {
-                  finishSuccess(m, delta.attemptId)
-                } else {
-                  finishFailure(m, delta.attemptId, error)
-                }
+              const { value: didApply } = await updateMemory(sessionID, (m) => {
+                const applied = applyDelta(m, delta, narrative, budget)
+                if (!applied) return false
+                return error === null
+                  ? finishSuccess(m, delta.attemptId)
+                  : finishFailure(m, delta.attemptId, error)
               })
               const ms = finishAttempt()
+              if (!didApply) {
+                // The attempt was superseded while the model ran: the file now
+                // belongs to a newer state, so this result is stale — never
+                // log it as success (P1-4).
+                logEvent("consolidation stale", { sid: sessionID, attempt: delta.attemptId, ms })
+                return
+              }
               if (error === null) {
                 logEvent("consolidation ok", {
                   sid: sessionID,

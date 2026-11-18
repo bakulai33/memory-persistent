@@ -520,12 +520,45 @@ export function estimatePromptTokens(prompt: string): number {
  * backoff of its own, so the second call is identical; the consolidation state
  * machine still records the failure when both attempts fail.
  */
-export async function retryOnce<T>(run: () => Promise<T>): Promise<T> {
+export async function retryOnce<T>(
+  run: () => Promise<T>,
+  isRetryable: (error: unknown) => boolean = () => true,
+): Promise<T> {
   try {
     return await run()
-  } catch {
+  } catch (error) {
+    if (!isRetryable(error)) throw error
     return await run()
   }
+}
+
+/** Error text that looks like a transient server/network fault (P1-5). */
+const RETRYABLE_TEXT_RE =
+  /\b5\d\d\b|server error|internal error|bad gateway|service unavailable|gateway timeout|overloaded|network|econnreset|econnrefused|enotfound|etimedout|socket|fetch failed|timeout|timed out|abort/i
+
+/** Rate limits, quota and auth failures need a human, not an immediate retry. */
+const NOT_RETRYABLE_TEXT_RE =
+  /\b429\b|rate.?limit|quota|unauthorized|\b401\b|forbidden|\b403\b|invalid[ _-]?api[ _-]?key|authentication|\b400\b|invalid request|not found|\b404\b/i
+
+/**
+ * Classifies consolidation model errors for the single retry: network,
+ * timeout and transient server (5xx) failures are worth a second call;
+ * 429, quota and auth (and other 4xx) are not (P1-5).
+ */
+export function isRetryableError(error: unknown): boolean {
+  const status =
+    typeof error === "object" && error !== null
+      ? (error as { status?: unknown }).status ?? (error as { statusCode?: unknown }).statusCode
+      : undefined
+  if (typeof status === "number" && Number.isFinite(status)) {
+    // An explicit status wins: 5xx is transient, anything else is not.
+    return status >= 500 && status < 600
+  }
+  const text = String(
+    typeof error === "object" && error !== null && "message" in error ? (error as Error).message : error,
+  )
+  if (NOT_RETRYABLE_TEXT_RE.test(text)) return false
+  return RETRYABLE_TEXT_RE.test(text)
 }
 
 export type ConsolidationDeps = {
@@ -715,8 +748,10 @@ export function validateStoreInput(text: unknown, tags: unknown): string | null 
   return null
 }
 
-export function applyDelta(m: MemoryFile, delta: Delta, narrative: string, budget = 5000): void {
-  if (m.consolidation.attemptId !== delta.attemptId) return
+export function applyDelta(m: MemoryFile, delta: Delta, narrative: string, budget = 5000): boolean {
+  // A stale attempt (superseded by another writer while the model ran) must
+  // not apply: the caller logs it as stale instead of success (P1-4).
+  if (m.consolidation.attemptId !== delta.attemptId) return false
   // Narrative content is always redacted at rest, on every branch (redact("") === "").
   narrative = redact(narrative)
   const activitySet = new Set(delta.activityIds)
@@ -736,7 +771,7 @@ export function applyDelta(m: MemoryFile, delta: Delta, narrative: string, budge
     m.summaryNarrative = split.narrative
     m.summary = split.summary
     m.needsConsolidation = true
-    return
+    return true
   }
   const turnSet = new Set(delta.turnIds)
   m.pendingTurns = m.pendingTurns.filter((t) => !turnSet.has(t.turnId))
@@ -748,4 +783,5 @@ export function applyDelta(m: MemoryFile, delta: Delta, narrative: string, budge
     m.needsConsolidation = false
     if (m.consolidation) m.consolidation.pendingSince = null
   }
+  return true
 }

@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { emptyMemory, addActivity, type PendingTurn } from "../src/storage"
-import { addPendingTurn, appendNote, collectDelta, applyDelta } from "../src/memory"
+import { addPendingTurn, appendNote, collectDelta, applyDelta, retryOnce, isRetryableError } from "../src/memory"
 import {
   beginAttempt,
   finishSuccess,
@@ -120,5 +120,71 @@ describe("retry after failed consolidation", () => {
     expect(m.summaryFacts).toBe("- command: bun test (3x)")
     expect(m.consolidation.consolidatedNotes).toBe(0)
     expect(m.needsConsolidation).toBe(false)
+  })
+})
+
+describe("retry predicate (T2.4)", () => {
+  test("429 and quota errors get exactly one call", async () => {
+    for (const message of ["HTTP 429: rate limited", "insufficient_quota: check billing"]) {
+      let calls = 0
+      const run = async () => {
+        calls++
+        throw new Error(message)
+      }
+      await expect(retryOnce(run, isRetryableError)).rejects.toThrow()
+      expect(calls).toBe(1)
+    }
+  })
+
+  test("auth failures are not retried", async () => {
+    for (const message of ["401 Unauthorized", "invalid api key provided", "403 Forbidden"]) {
+      let calls = 0
+      const run = async () => {
+        calls++
+        throw new Error(message)
+      }
+      await expect(retryOnce(run, isRetryableError)).rejects.toThrow()
+      expect(calls).toBe(1)
+    }
+  })
+
+  test("other 4xx statuses are not retried", async () => {
+    let calls = 0
+    const run = async () => {
+      calls++
+      const err = new Error("bad request")
+      ;(err as any).status = 400
+      throw err
+    }
+    await expect(retryOnce(run, isRetryableError)).rejects.toThrow("bad request")
+    expect(calls).toBe(1)
+  })
+
+  test("500, network and timeout errors get a second call", async () => {
+    for (const error of [
+      Object.assign(new Error("boom"), { status: 503 }),
+      new Error("fetch failed: ECONNRESET"),
+      new Error("request timed out after 30s"),
+    ]) {
+      let calls = 0
+      const run = async () => {
+        calls++
+        if (calls === 1) throw error
+        return "ok"
+      }
+      await expect(retryOnce(run, isRetryableError)).resolves.toBe("ok")
+      expect(calls).toBe(2)
+    }
+  })
+
+  test("the default predicate retries any error (legacy behavior)", async () => {
+    let calls = 0
+    const run = async () => {
+      calls++
+      if (calls === 1) throw new Error("anything at all")
+      return "ok"
+    }
+    await expect(retryOnce(run)).resolves.toBe("ok")
+    expect(calls).toBe(2)
   })
 })

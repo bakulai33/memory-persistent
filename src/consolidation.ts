@@ -44,11 +44,42 @@ export function backoffMs(failureCount: number): number {
 
 export const RUNNING_TIMEOUT_MS = 5 * 60_000
 
+/**
+ * Attempts whose consolidation fiber is alive in this process (P1-4). A slow
+ * model call must not be discarded by another session's recovery sweep just
+ * because `startedAt` passed the running timeout.
+ */
+const activeAttempts = new Map<string, number>()
+
+/**
+ * Registrations older than this are pruned, so a fiber that died without
+ * finishing (crash) cannot protect its attempt forever.
+ */
+export const ACTIVE_ATTEMPT_TTL_MS = 30 * 60_000
+
+function pruneActiveAttempts(now: number): void {
+  for (const [id, started] of activeAttempts) {
+    if (now - started > ACTIVE_ATTEMPT_TTL_MS) activeAttempts.delete(id)
+  }
+}
+
+/** Diagnostic: when `attemptId` was registered (epoch ms), or null. */
+export function activeAttemptAt(attemptId: string): number | null {
+  return activeAttempts.get(attemptId) ?? null
+}
+
 export function recoverStaleAttempt(m: MemoryFile, now: number = Date.now()): boolean {
+  pruneActiveAttempts(now)
   const c = m.consolidation
   if (c.state !== "running") return false
   const started = c.startedAt ? Date.parse(c.startedAt) : NaN
   if (!Number.isNaN(started) && now - started < RUNNING_TIMEOUT_MS) return false
+  // The fiber may still be alive in this process: a registered attempt is
+  // protected. Once the registration is pruned (crash), recovery proceeds.
+  if (c.attemptId !== null) {
+    if (activeAttempts.has(c.attemptId)) return false
+    activeAttempts.delete(c.attemptId)
+  }
   c.state = "failed"
   c.finishedAt = new Date(now).toISOString()
   c.error = "stale attempt (timeout)"
@@ -61,6 +92,8 @@ export function recoverStaleAttempt(m: MemoryFile, now: number = Date.now()): bo
 export function beginAttempt(m: MemoryFile, attemptId: string, now: number = Date.now()): void {
   const c = m.consolidation
   const iso = new Date(now).toISOString()
+  pruneActiveAttempts(now)
+  activeAttempts.set(attemptId, now)
   c.state = "running"
   c.attemptId = attemptId
   c.startedAt = iso
@@ -72,6 +105,7 @@ export function beginAttempt(m: MemoryFile, attemptId: string, now: number = Dat
 export function finishSuccess(m: MemoryFile, attemptId: string, now: number = Date.now()): boolean {
   const c = m.consolidation
   if (c.attemptId !== attemptId) return false
+  activeAttempts.delete(attemptId)
   c.state = "idle"
   c.attemptId = null
   c.finishedAt = new Date(now).toISOString()
@@ -88,6 +122,7 @@ export function finishSuccess(m: MemoryFile, attemptId: string, now: number = Da
 export function finishFailure(m: MemoryFile, attemptId: string, error: string, now: number = Date.now()): boolean {
   const c = m.consolidation
   if (c.attemptId !== attemptId) return false
+  activeAttempts.delete(attemptId)
   c.state = "failed"
   c.attemptId = null
   c.finishedAt = new Date(now).toISOString()
