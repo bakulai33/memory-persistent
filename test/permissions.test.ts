@@ -21,6 +21,25 @@ describe("permissions", () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  test("repairPermissions creates fresh dirs with mode 0700 (T4.7)", async () => {
+    // The mkdir CALL itself must carry the mode: a directory that is world-
+    // readable between mkdir and the later chmod is a (brief) exposure. The
+    // final chmod walk already yields 0700 either way, so observe the args.
+    const fsp = await import("node:fs/promises")
+    const realMkdir = fsp.mkdir
+    const modes: (number | undefined)[] = []
+    const spy = spyOn(fsp as any, "mkdir").mockImplementation(async (p: any, opts: any) => {
+      modes.push(opts?.mode)
+      return realMkdir(p, opts)
+    })
+    try {
+      await repairPermissions()
+    } finally {
+      spy.mockRestore()
+    }
+    expect(modes).toEqual([0o700, 0o700])
+  })
+
   test("repairPermissions fixes files and dirs", async () => {
     const root = join(dir, "opencode", "memory-persistent")
     const sessions = join(root, "sessions")

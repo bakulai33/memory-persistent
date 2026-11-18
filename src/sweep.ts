@@ -23,6 +23,12 @@ export interface SweepResult {
 }
 
 /**
+ * Hard ceiling for a configured sweep page count (T4.7): a config value may
+ * tune the sweep down, but never turn it into an unbounded walk.
+ */
+export const SWEEP_MAX_PAGES_LIMIT = 200
+
+/**
  * Collects every session id. Returns null when the list cannot be enumerated completely,
  * which tells the caller to delete nothing rather than to guess.
  */

@@ -42,7 +42,7 @@ import {
   shouldDefer,
   noteDeferral,
 } from "./consolidation.js"
-import { sweep, type SessionLister } from "./sweep.js"
+import { SWEEP_MAX_PAGES_LIMIT, sweep, type SessionLister } from "./sweep.js"
 import { extractUserExcerpt } from "./heuristics.js"
 import { capturePolicy } from "./capture.js"
 import { redact } from "./redact.js"
@@ -82,6 +82,13 @@ const ForgetInput = Schema.Struct({
 })
 
 const DEFAULT_TOKEN_BUDGET = 5000
+/** Bounds an optional numeric config value into [min, max]; anything else
+ * falls back to the default (T4.7). */
+function boundedInt(value: unknown, min: number, max: number, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, Math.floor(value)))
+}
+
 const DEFAULT_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000
 
 // Sweeps are spaced out per plugin instance so an idle session does not rescan on every turn.
@@ -180,6 +187,9 @@ export default define({
     const sweepEnabled = options.sweepEnabled !== false
     const sweepIntervalMs =
       typeof options.sweepIntervalMs === "number" ? options.sweepIntervalMs : DEFAULT_SWEEP_INTERVAL_MS
+    // The configured page count is honored but bounded: the sweep may walk
+    // less than the ceiling, never an unbounded number of pages (T4.7).
+    const sweepMaxPages = boundedInt(options.sweepMaxPages, 1, SWEEP_MAX_PAGES_LIMIT, 50)
 
     // Register tools
     yield* ctx.tool.transform((editor: any) => {
@@ -374,6 +384,7 @@ export default define({
         listSessions,
         listFiles: () => Effect.promise(() => listMemoryFiles()),
         deleteFiles: (sessionID) => Effect.promise(() => deleteMemoryFiles(sessionID)),
+        maxPages: sweepMaxPages,
       })
       if (result.incomplete) {
         logEvent("sweep", { status: "incomplete" })

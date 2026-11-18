@@ -11,6 +11,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { Effect, Stream } from "effect"
 import plugin from "../src/index"
+import { SWEEP_MAX_PAGES_LIMIT } from "../src/sweep"
 import { emptyMemory, writeMemory, readMemory, memoryDir, buildInfoPath, updateMemory } from "../src/storage"
 import { appendNote, addPendingTurn, PAYLOAD_CAP_BYTES } from "../src/memory"
 
@@ -582,6 +583,42 @@ describe("plugin (tools, hooks, events)", () => {
     await activateHeld(throwing.ctx)
     const log = readFileSync(join(dir, "opencode", "memory-persistent", "plugin.log"), "utf8")
     expect(log).toContain("sweep status=failed")
+  })
+
+  test("sweepMaxPages is honored and stays bounded (T4.7)", async () => {
+    // An endless lister: the sweep walks exactly maxPages pages, then stops
+    // with an incomplete listing (deleting nothing).
+    const endless = (id: string, options: Record<string, unknown>) => {
+      const scoped = mockContext(id)
+      let calls = 0
+      scoped.ctx.session.list = () => {
+        calls++
+        return Effect.succeed({ data: [{ id }], cursor: { next: `c${calls}` } } as any)
+      }
+      scoped.ctx.options = options
+      return { scoped, callsRef: () => calls }
+    }
+
+    // A configured small bound is honored.
+    const five = endless("ses_sweep_five", { sweepMaxPages: 5 })
+    await withHeldScope(five.scoped.ctx, async () => {
+      await waitFor(async () => five.callsRef() >= 5)
+      expect(five.callsRef()).toBe(5)
+    })
+
+    // An absurd config is clamped to the sweep bound.
+    const huge = endless("ses_sweep_huge", { sweepMaxPages: 100_000 })
+    await withHeldScope(huge.scoped.ctx, async () => {
+      await waitFor(async () => huge.callsRef() >= SWEEP_MAX_PAGES_LIMIT)
+      expect(huge.callsRef()).toBe(SWEEP_MAX_PAGES_LIMIT)
+    })
+
+    // A nonsensical config clamps to at least one page.
+    const zero = endless("ses_sweep_zero", { sweepMaxPages: 0 })
+    await withHeldScope(zero.scoped.ctx, async () => {
+      await waitFor(async () => zero.callsRef() >= 1)
+      expect(zero.callsRef()).toBe(1)
+    })
   })
 
   test("activation tolerates a corrupt build record", async () => {

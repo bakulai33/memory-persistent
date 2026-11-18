@@ -563,8 +563,10 @@ export async function repairPermissions(dir?: string): Promise<{ files: number; 
   // so their permissions can be repaired (and enforced) at activation.
   if (dir === undefined) {
     const sessions = join(target, "sessions")
-    await mkdir(target, { recursive: true }).catch(() => {})
-    await mkdir(sessions, { recursive: true }).catch(() => {})
+    // Created private from birth (T4.7): the later chmod walk must not be
+    // the only thing standing between the directory and other users.
+    await mkdir(target, { recursive: true, mode: 0o700 }).catch(() => {})
+    await mkdir(sessions, { recursive: true, mode: 0o700 }).catch(() => {})
   }
 
   async function walk(current: string): Promise<void> {
