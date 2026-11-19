@@ -64,6 +64,7 @@ A local directory loads through the package `exports` map; no build step is need
 | `tokenBudget` | `5000` | Token budget of the memory injected into context |
 | `sweepEnabled` | `true` | Enable the sweep for orphaned memory files |
 | `sweepIntervalMs` | `21600000` (6 h) | Interval between periodic sweeps |
+| `sweepMaxPages` | `50` | Maximum directory pages the sweep enumerates per run (clamped to 1–200) |
 | `consolidationMode` | `stateless` | Consolidation call mode: `stateless` (prompt built from the delta only; session history is not sent) or `session` (session history included) |
 
 ## Lifecycle
@@ -73,7 +74,7 @@ A local directory loads through the package `exports` map; no build step is need
 | Important prompt | Marked as a pending turn (heuristic, no model); the capture policy decides whether it is stored |
 | State-changing tool | Recorded as activity: files changed, meaningful commands, or errors |
 | Every request | Memory is injected as a system part (max `tokenBudget` tokens, default 5000) |
-| Session idle | Conversation + activity are consolidated: state `idle` → `running` → `idle` (success) or `failed` |
+| Session idle | The hook returns immediately; consolidation runs in the background as a plugin-scoped fiber: state `idle` → `running` → `idle` (success) or `failed` |
 | Consolidation runs > 5 minutes without finishing | The attempt is considered dead, recovered as `failed` (`consecutiveFailures++`), then retried after backoff |
 | Consolidation fails | State `failed`, error recorded (redacted), retried on the next idle after a backoff of 1→2→4→8→10 minutes; the narrative batch is completed (pending turns are not lost) |
 | Consolidation succeeds | State `idle`, `consecutiveFailures` = 0, `needsConsolidation` false when nothing is pending |
@@ -208,11 +209,12 @@ surprises you:
   path (`tools/log-bench.ts`, 500–1000 events) measured p95 ≈ 0.05–0.5 ms per
   event — far inside the 5 ms budget that would have forced an async queue —
   so synchronous logging stays.
-- **Manual notes are capped at 200 per session.** The oldest notes are evicted when
-  the cap is exceeded (also applied when reading legacy files that exceed it).
+- **Manual notes are capped at 200 per session (fixed, not configurable).** The oldest
+  notes are evicted when the cap is exceeded (also applied when reading legacy files
+  that exceed it).
 - **Tool payloads are bounded.** `memory_recall` / `memory_list` return previews of
   at most 500 characters per note and a JSON payload capped at 32 KiB, with
-  `truncated` flags when something was cut.
+  `truncated` and `totalNotes` flags when something was cut.
 - **The selfcheck verifies the entry import graph, not types.** It proves every
   named import resolves to a real export; it does not type-check (run `tsc` for
   that) and it does not verify runtime behavior.
@@ -238,7 +240,11 @@ surprises you:
   idle: it sends the prompt built from the delta (facts, conversation, notes, activity)
   to the model provider OpenCode already uses for your chat. Nothing else is contacted.
 - Secrets are redacted **before anything is written to disk** — best-effort heuristics,
-  not a guarantee.
+  not a guarantee. Covered formats include JSON key/value secrets (`api_key`,
+  `secret`, `token`, `password`, …), `Bearer` tokens, `sk-` keys, `npm_`, `ghp_`,
+  AWS/Google/Slack/GitLab tokens, JWTs, credentials in known URL schemes,
+  `Authorization` headers, and private-key blocks. Activity targets (commands and
+  paths) are redacted with the same rules.
 - **No telemetry.** Nothing is sent to the plugin author or any analytics service.
 
 ## Measure
@@ -275,6 +281,7 @@ corrupt backups, stale tmp files).
 bun install
 bun test
 bun run check        # bun test && bunx tsc --noEmit
+bun run selfcheck    # preflight: import graph + no hardcoded /home/<user>/ paths (exit 1 on mismatch)
 bun run fixtures     # regenerate tool-call fixtures (needs the test/ directory — not shipped to npm; source checkouts only)
 bun run measure      # read-only effectiveness report
 ```

@@ -64,6 +64,7 @@ Direktori lokal dimuat melalui map `exports` paket; tidak perlu build step.
 | `tokenBudget` | `5000` | Batas token memori yang diinjeksikan ke konteks |
 | `sweepEnabled` | `true` | Aktifkan sweep file memori yatim |
 | `sweepIntervalMs` | `21600000` (6 jam) | Jarak antar sweep periodik |
+| `sweepMaxPages` | `50` | Maksimum halaman direktori yang dienumerasi sweep per run (di-clamp 1–200) |
 | `consolidationMode` | `stateless` | Mode panggilan konsolidasi: `stateless` (prompt dibangun dari delta saja; riwayat sesi tidak dikirim) atau `session` (riwayat sesi disertakan) |
 
 ## Lifecycle
@@ -73,7 +74,7 @@ Direktori lokal dimuat melalui map `exports` paket; tidak perlu build step.
 | Prompt penting | Ditandai sebagai pending turn (heuristik, tanpa model); policy capture menentukan apakah disimpan |
 | Tool yang mengubah state | Dicatat sebagai activity: file yang diubah, command bermakna, atau error |
 | Setiap request | Memori diinjeksikan sebagai system part (maks `tokenBudget` token, default 5000) |
-| Sesi idle | Percakapan + activity dikonsolidasi: state `idle` → `running` → `idle` (sukses) atau `failed` |
+| Sesi idle | Hook langsung kembali; konsolidasi berjalan di background sebagai fiber ber-scope plugin: state `idle` → `running` → `idle` (sukses) atau `failed` |
 | Konsolidasi berjalan > 5 menit tanpa selesai | Attempt dianggap mati, di-recover menjadi `failed` (`consecutiveFailures++`), lalu di-retry setelah backoff |
 | Konsolidasi gagal | State `failed`, error dicatat (di-redaksi), retry pada idle berikutnya setelah backoff 1→2→4→8→10 menit; batch naratif dilengkapi (turn pending tidak hilang) |
 | Konsolidasi sukses | State `idle`, `consecutiveFailures` = 0, `needsConsolidation` false bila tidak ada pending |
@@ -207,11 +208,12 @@ mengejutkan Anda:
   bukan audit log. Benchmark manual jalur steady-state (`tools/log-bench.ts`,
   500–1000 event) mengukur p95 ≈ 0,05–0,5 ms per event — jauh di dalam anggaran
   5 ms yang baru akan memaksa antrean async — jadi penulisan sinkron dipertahankan.
-- **Notes manual dibatasi 200 per sesi.** Note paling lama dievakuasi saat batas
-  terlampaui (juga diterapkan saat membaca file legacy yang melampauinya).
+- **Notes manual dibatasi 200 per sesi (tetap, tidak dapat dikonfigurasi).** Note paling
+  lama dievakuasi saat batas terlampaui (juga diterapkan saat membaca file legacy yang
+  melampauinya).
 - **Payload tool dibatasi.** `memory_recall` / `memory_list` mengembalikan preview
   maksimal 500 karakter per note dan payload JSON dibatasi 32 KiB, dengan flag
-  `truncated` saat ada yang dipotong.
+  `truncated` dan `totalNotes` saat ada yang dipotong.
 - **Selfcheck memverifikasi graph import entry, bukan tipe.** Ia membuktikan
   setiap named import menunjuk export nyata; tidak melakukan type-check (jalankan
   `tsc` untuk itu) dan tidak memverifikasi perilaku runtime.
@@ -238,7 +240,11 @@ mengejutkan Anda:
   mengirim prompt yang dibangun dari delta (facts, conversation, notes, activity) ke
   provider model yang sudah dipakai OpenCode untuk chat Anda. Tidak ada endpoint lain.
 - Secret di-redaksi **sebelum apa pun ditulis ke disk** — heuristik best-effort, bukan
-  jaminan.
+  jaminan. Format yang dicakup meliputi secret JSON key/value (`api_key`, `secret`,
+  `token`, `password`, …), token `Bearer`, key `sk-`, `npm_`, `ghp_`, token AWS/Google/
+  Slack/GitLab, JWT, kredensial pada scheme URL yang dikenal, header `Authorization`,
+  dan blok private key. Target activity (command dan path) juga di-redaksi dengan
+  aturan yang sama.
 - **Tanpa telemetry.** Tidak ada yang dikirim ke pembuat plugin atau layanan analitik
   mana pun.
 
@@ -276,6 +282,7 @@ file tmp stale).
 bun install
 bun test
 bun run check        # bun test && bunx tsc --noEmit
+bun run selfcheck    # preflight: graph import + tidak ada path /home/<user>/ hardcoded (exit 1 bila mismatch)
 bun run fixtures     # regenerasi fixture tool-call (butuh direktori test/ — tidak dikirim ke npm; hanya untuk kerja dari source)
 bun run measure      # laporan efektivitas read-only
 ```
