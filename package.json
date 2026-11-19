@@ -1,6 +1,6 @@
 {
   "name": "opencode-memory-persistent",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Per-session persistent memory for OpenCode. Session-scoped by construction; no cross-session reads.",
   "license": "MIT",
   "author": "bakulai33",

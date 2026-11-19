@@ -24,14 +24,14 @@ ke sesi lain**.
 ### Dari registry npm
 
 ```bash
-opencode plugin add opencode-memory-persistent@0.6.0
+opencode plugin add opencode-memory-persistent@0.6.1
 ```
 
 Lalu daftarkan di `~/.config/opencode/opencode.json`:
 
 ```json
 {
-  "plugins": ["opencode-memory-persistent@0.6.0"]
+  "plugins": ["opencode-memory-persistent@0.6.1"]
 }
 ```
 
@@ -40,7 +40,7 @@ atau dengan opsi plugin:
 ```json
 {
   "plugins": [
-    { "package": "opencode-memory-persistent@0.6.0", "options": { "tokenBudget": 5000 } }
+    { "package": "opencode-memory-persistent@0.6.1", "options": { "tokenBudget": 5000 } }
   ]
 }
 ```
@@ -120,7 +120,7 @@ mengaburkan percakapan.
 ## Schema
 
 - **Versi skema:** `4` (schema v4 dengan pemisahan facts warisan)
-- **Build catatan:** `build.json` mencatat `build: "0.6.0"` dan hash source; drift
+- **Build catatan:** `build.json` mencatat `build: "0.6.1"` dan hash source; drift
   dilaporkan via `memory_health`
 - **Label "unverified":** narasi model ditandai sebagai
   "Notes (model-generated, unverified):" — tidak pernah dijadikan sumber fakta

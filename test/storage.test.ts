@@ -213,7 +213,7 @@ describe("storage", () => {
   test("a new memory file carries the v4 shape", () => {
     const memory = emptyMemory("ses_new")
     expect(memory.version).toBe(4)
-    expect(memory.build).toBe("0.6.0")
+    expect(memory.build).toBe("0.6.1")
     expect(memory.summaryFacts).toBe("")
     expect(memory.summaryNarrative).toBe("")
     expect(memory.pendingActivity).toEqual([])

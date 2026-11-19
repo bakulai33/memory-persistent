@@ -24,14 +24,14 @@ another session.
 ### From the npm registry
 
 ```bash
-opencode plugin add opencode-memory-persistent@0.6.0
+opencode plugin add opencode-memory-persistent@0.6.1
 ```
 
 Then add it to `~/.config/opencode/opencode.json`:
 
 ```json
 {
-  "plugins": ["opencode-memory-persistent@0.6.0"]
+  "plugins": ["opencode-memory-persistent@0.6.1"]
 }
 ```
 
@@ -40,7 +40,7 @@ or with plugin options:
 ```json
 {
   "plugins": [
-    { "package": "opencode-memory-persistent@0.6.0", "options": { "tokenBudget": 5000 } }
+    { "package": "opencode-memory-persistent@0.6.1", "options": { "tokenBudget": 5000 } }
   ]
 }
 ```
@@ -120,7 +120,7 @@ the conversation.
 ## Schema
 
 - **Schema version:** `4` (schema v4 with legacy facts separation)
-- **Build record:** `build.json` stores `build: "0.6.0"` plus the source hash; drift is
+- **Build record:** `build.json` stores `build: "0.6.1"` plus the source hash; drift is
   reported via `memory_health`
 - **"unverified" label:** the model narrative is labelled
   "Notes (model-generated, unverified):" — never treated as a source of facts

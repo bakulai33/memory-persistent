@@ -79,7 +79,7 @@ describe("buildMeasureReport", () => {
     expect(report.totalFiles).toBe(2)
     expect(report.schemaVersions).toEqual({ 3: 1, 4: 1 })
     expect(report.builds).toEqual({ "0.4.0": 1, "0.5.0": 1 })
-    // Both fixtures were written by builds other than the running plugin (0.6.0).
+    // Both fixtures were written by builds other than the running build.
     expect(report.driftCount).toBe(2)
 
     // Both fields feed the facts section: alpha owns 3 lines, alpha inherits

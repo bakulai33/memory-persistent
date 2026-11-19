@@ -522,7 +522,7 @@ describe("plugin (tools, hooks, events)", () => {
 
     // the build record now carries the running hash
     const record = JSON.parse(readFileSync(join(root, "build.json"), "utf8"))
-    expect(record.build).toBe("0.6.0")
+    expect(record.build).toBe("0.6.1")
     expect(record.sourceHash).not.toBe("stale-hash")
     expect(statSync(join(root, "build.json")).mode & 0o777).toBe(0o600)
   })
@@ -628,7 +628,7 @@ describe("plugin (tools, hooks, events)", () => {
     await activate(ctx0())
     // The record was rewritten with the running build.
     const record = JSON.parse(readFileSync(join(root, "build.json"), "utf8"))
-    expect(record.build).toBe("0.6.0")
+    expect(record.build).toBe("0.6.1")
   })
 
   test("activity and context hooks swallow an invalid session id", async () => {
