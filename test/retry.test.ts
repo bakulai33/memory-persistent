@@ -217,3 +217,17 @@ describe("fallback eligibility (v0.6.2)", () => {
     expect(isFallbackEligibleError(new Error("404 Not Found"))).toBe(false)
   })
 })
+
+describe("fallback eligibility stack safety (v0.6.2 regression)", () => {
+  test("a stack line number 403 does not make an arbitrary error eligible", () => {
+    const err = new Error("Error: provider down\n    at plugin.test.ts:403:68")
+    expect(isFallbackEligibleError(err)).toBe(false)
+  })
+})
+
+describe("fallback eligibility real free-tier message (v0.6.2 regression)", () => {
+  test("OpenCode free usage limit message is eligible", () => {
+    const msg = "Generate.ProviderRequestError: Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going"
+    expect(isFallbackEligibleError(new Error(msg))).toBe(true)
+  })
+})

@@ -29,6 +29,7 @@ import {
   defaultConsolidationMode,
   estimatePromptTokens,
   isRetryableError,
+  isFallbackEligibleError,
   retryOnce,
   validateStoreInput,
 } from "./memory.js"
@@ -431,6 +432,7 @@ export default define({
           ? "\n\nCatatan: background work mungkin masih berjalan; ringkasan dapat belum lengkap."
           : ""
         let narrativeError: string | null = null
+        let usedFallback = false
         let estPromptTokens = 0
         const attemptStartedAt = Date.now()
         const finishAttempt = () => {
@@ -491,7 +493,10 @@ export default define({
                       try {
                         return await run()
                       } catch (err) {
-                        if (first) {
+                        // v0.6.2: only transient faults are worth a retry, so
+                        // only those emit "consolidation retry". Quota/auth
+                        // errors are handed off by the caller instead.
+                        if (first && isRetryableError(err)) {
                           first = false
                           onFirstFailure(err instanceof Error ? err.message : String(err))
                         }
@@ -512,16 +517,30 @@ export default define({
 
                 const info = await Effect.runPromiseExit(ctx.session.get({ sessionID }))
                 const model = Exit.isSuccess(info) ? info.value?.model : undefined
-                return await retryLogged(
-                  async () => {
-                    const outcome = await Effect.runPromiseExit(
-                      ctx.experimental.generate.text(model ? { prompt, model } : { prompt }),
-                    )
-                    if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
-                    return String(outcome.value?.text ?? "").trim()
-                  },
-                  (error) => logEvent("consolidation retry", { sid: sessionID, attempt: 1, error }),
-                )
+                const statelessRun = async () => {
+                  const outcome = await Effect.runPromiseExit(
+                    ctx.experimental.generate.text(model ? { prompt, model } : { prompt }),
+                  )
+                  if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
+                  return String(outcome.value?.text ?? "").trim()
+                }
+                try {
+                  return await retryLogged(statelessRun, (error) =>
+                    logEvent("consolidation retry", { sid: sessionID, attempt: 1, error }),
+                  )
+                } catch (err) {
+                  if (!isFallbackEligibleError(err)) throw err
+                  logEvent("consolidation fallback", {
+                    sid: sessionID,
+                    attempt: delta.attemptId,
+                    reason: redact(String(err)).slice(0, 200),
+                    toMode: "session",
+                  })
+                  usedFallback = true
+                  return await retryLogged(sessionScoped, (error) =>
+                    logEvent("consolidation retry", { sid: sessionID, attempt: 1, error }),
+                  )
+                }
               } catch (err) {
                 narrativeError = err instanceof Error ? err.message : String(err)
                 return ""
@@ -550,6 +569,7 @@ export default define({
                   attempt: delta.attemptId,
                   ms,
                   tokens: estimatePromptTokens(narrative),
+                  fallback: usedFallback,
                 })
               } else {
                 logEvent("consolidation failed", { sid: sessionID, attempt: delta.attemptId, ms, error })

@@ -615,7 +615,7 @@ export function isRetryableError(error: unknown): boolean {
 
 const FALLBACK_ELIGIBLE_STATUS = new Set([401, 403, 429])
 const FALLBACK_ELIGIBLE_TEXT_RE =
-  /\b429\b|rate.?limit|quota|unauthorized|\b401\b|forbidden|\b403\b|invalid[ _-]?api[ _-]?key|authentication/i
+  /\b429\b|rate.?limit|usage.?limit|limit.?reached|quota|unauthorized|\b401\b|forbidden|\b403\b|invalid[ _-]?api[ _-]?key|authentication/i
 
 /**
  * v0.6.2: an error that should hand the stateless consolidation call off to
@@ -631,9 +631,12 @@ export function isFallbackEligibleError(error: unknown): boolean {
   if (typeof status === "number" && Number.isFinite(status)) {
     return FALLBACK_ELIGIBLE_STATUS.has(status)
   }
-  const text = String(
+  const raw = String(
     typeof error === "object" && error !== null && "message" in error ? (error as Error).message : error,
   )
+  // Cause.pretty embeds a stack; line numbers such as ":403:" would otherwise
+  // match the status pattern. Only the headline can carry a real status/message.
+  const text = raw.split("\n")[0] ?? raw
   return FALLBACK_ELIGIBLE_TEXT_RE.test(text)
 }
 
