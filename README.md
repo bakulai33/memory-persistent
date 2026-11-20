@@ -183,6 +183,11 @@ the prohibition on storing raw tool output or secrets.
   delta (facts + conversation + notes + activity) is sent; session history is not
   included. Memory stores deterministic facts plus an optional model narrative; facts
   are written even when the narrative fails.
+  Since 0.6.2, if that stateless call fails with a quota/auth error (429, 401, 403,
+  "usage limit reached"), the plugin makes **one** fallback call through
+  `session.generate` with the same prompt and model. Session history is sent
+  **only** on that fallback. The fallback emits a `consolidation fallback` log
+  event, and `consolidation ok` carries `fallback: true` when it was used.
 - The build record (`build.json`) stores the source hash; drift between activations is
   reported via `memory_health` and the log.
 

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.6.2 — Stateless fallback
+
+### Added
+
+- `isFallbackEligibleError` classifies quota/auth failures (429/401/403,
+  "usage limit reached", invalid API key) that are eligible for a fallback.
+- `consolidation fallback` log event with `sid`, `attempt`, redacted `reason`,
+  and `toMode: "session"`; `consolidation ok` now carries `fallback: boolean`.
+
+### Changed
+
+- On a quota/auth failure, the stateless consolidation call hands off once to
+  `ctx.session.generate` with the same prompt and model. Transient 5xx/network/
+  timeout errors still retry in place; 400/404 do not trigger a fallback.
+- `consolidation retry` is logged only for retryable (transient) errors.
+- README/README.id explicitly document that session history is sent **only** on
+  the fallback path.
+
+### Notes
+
+- Version 0.6.2; no schema change, no new dependency, no npm publish, no tag.
+- The default consolidation mode remains `stateless`.
+
 ## 0.6.1 — Hardening
 
 ### Added

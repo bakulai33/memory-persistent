@@ -183,6 +183,11 @@ Lainnya: panjang > 120 **karakter** → `always`; greetings → `noise`; pendek 
   dibangun dari delta (facts + conversation + notes + activity) yang dikirim; riwayat
   sesi tidak disertakan. Memori menyimpan facts deterministik plus naratif model
   opsional; facts tetap ditulis meskipun naratif gagal.
+  Sejak 0.6.2, bila panggilan stateless itu gagal karena kuota/auth (429, 401, 403,
+  "usage limit reached"), plugin melakukan **satu** fallback lewat `session.generate`
+  dengan prompt dan model yang sama. Riwayat sesi **hanya** dikirim pada fallback itu.
+  Fallback memancarkan event log `consolidation fallback`, dan `consolidation ok`
+  membawa `fallback: true` bila fallback dipakai.
 - Build record (`build.json`) mencatat source hash; drift antar aktivasi dilaporkan
   lewat `memory_health` dan log.
 
