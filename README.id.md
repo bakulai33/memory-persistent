@@ -21,17 +21,22 @@ ke sesi lain**.
 
 ## Instalasi
 
-### Dari registry npm
+Plugin ini **tidak dipublish ke registry npm**. Pasang dari GitHub atau dari
+direktori lokal.
+
+### Dari GitHub
 
 ```bash
-opencode plugin add opencode-memory-persistent@0.6.2
+opencode plugin add opencode-memory-persistent@git+https://github.com/bakulai33/memory-persistent.git#v0.6.2
 ```
 
 Lalu daftarkan di `~/.config/opencode/opencode.json`:
 
 ```json
 {
-  "plugins": ["opencode-memory-persistent@0.6.2"]
+  "plugins": [
+    "opencode-memory-persistent@git+https://github.com/bakulai33/memory-persistent.git#v0.6.2"
+  ]
 }
 ```
 
@@ -40,12 +45,15 @@ atau dengan opsi plugin:
 ```json
 {
   "plugins": [
-    { "package": "opencode-memory-persistent@0.6.2", "options": { "tokenBudget": 5000 } }
+    {
+      "package": "opencode-memory-persistent@git+https://github.com/bakulai33/memory-persistent.git#v0.6.2",
+      "options": { "tokenBudget": 5000 }
+    }
   ]
 }
 ```
 
-Pin versi eksaknya.
+Pin tag eksak (atau SHA commit) agar pembaruan bersifat eksplisit.
 
 ### Dari direktori lokal
 

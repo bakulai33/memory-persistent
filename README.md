@@ -21,17 +21,22 @@ another session.
 
 ## Installation
 
-### From the npm registry
+This plugin is **not published to the npm registry**. Install it from GitHub
+or from a local directory.
+
+### From GitHub
 
 ```bash
-opencode plugin add opencode-memory-persistent@0.6.2
+opencode plugin add opencode-memory-persistent@git+https://github.com/bakulai33/memory-persistent.git#v0.6.2
 ```
 
 Then add it to `~/.config/opencode/opencode.json`:
 
 ```json
 {
-  "plugins": ["opencode-memory-persistent@0.6.2"]
+  "plugins": [
+    "opencode-memory-persistent@git+https://github.com/bakulai33/memory-persistent.git#v0.6.2"
+  ]
 }
 ```
 
@@ -40,12 +45,15 @@ or with plugin options:
 ```json
 {
   "plugins": [
-    { "package": "opencode-memory-persistent@0.6.2", "options": { "tokenBudget": 5000 } }
+    {
+      "package": "opencode-memory-persistent@git+https://github.com/bakulai33/memory-persistent.git#v0.6.2",
+      "options": { "tokenBudget": 5000 }
+    }
   ]
 }
 ```
 
-Pin the exact version.
+Pin the exact tag (or a commit SHA) so upgrades are explicit.
 
 ### From a local directory
 
