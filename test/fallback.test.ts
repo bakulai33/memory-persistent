@@ -224,3 +224,23 @@ describe("v0.6.2 stateless → session fallback", () => {
     expect(lines.some((l) => l.includes("consolidation retry"))).toBe(false)
   })
 })
+
+describe("v0.6.2 fallback — status through the real error path (review fix)", () => {
+  test("status 429 with generic message falls back", async () => {
+    const sid = "ses_fb_status429"
+    const { ctx, hooks } = mockContext(sid)
+    let scoped = 0
+    ctx.experimental.generate.text = () =>
+      Effect.fail({ status: 429, message: "Too Many Requests" } as any)
+    ctx.session.generate = () => {
+      scoped++
+      return Effect.succeed({ text: "status fallback" })
+    }
+    await seed(sid)
+    await withHeldScope(ctx, async () => {
+      await runHook(hooks["experimental.idle"], { sessionID: sid, background: [] })
+      await waitFor(async () => (await readMemory(sid)).summary.includes("status fallback"))
+    })
+    expect(scoped).toBe(1)
+  })
+})

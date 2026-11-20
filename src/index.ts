@@ -1,6 +1,6 @@
 import { define } from "@opencode/plugin/effect/plugin"
 import type { Context } from "@opencode/plugin/effect/plugin"
-import { Brand, Cause, Effect, Exit, FiberMap, Schema, Stream } from "effect"
+import { Brand, Cause, Effect, Exit, FiberMap, Option, Schema, Stream } from "effect"
 import {
   addActivity,
   buildInfoPath,
@@ -418,7 +418,28 @@ export default define({
     // Background fibers: one consolidation per session + the periodic sweep.
     // The hook returns immediately; fibers are interrupted when the plugin
     // scope closes (FiberMap.make is scoped).
-    const background = yield* FiberMap.make<string>()
+    /**
+ * v0.6.2: Effect's `Cause.pretty` flattens a typed provider failure into a
+ * plain Error, dropping `.status`/`.statusCode`. Preserve those fields so
+ * `isFallbackEligibleError` can recognize a bare 429/401/403 whose message is
+ * generic ("Too Many Requests"). Falls back to the pretty string when the
+ * cause carries no inspectable failure.
+ */
+const toConsolidationError = (cause: Cause.Cause<unknown>): Error => {
+  const pretty = Cause.pretty(cause)
+  const found = Cause.findErrorOption(cause)
+  const raw = Option.isSome(found) ? found.value : undefined
+  const err = new Error(pretty)
+  if (raw && typeof raw === "object") {
+    const status = (raw as { status?: unknown }).status ?? (raw as { statusCode?: unknown }).statusCode
+    if (typeof status === "number" && Number.isFinite(status)) {
+      ;(err as Error & { status?: number }).status = status
+    }
+  }
+  return err
+}
+
+const background = yield* FiberMap.make<string>()
 
     /** Branded session id as the host's session API expects it. */
     type SessionId = string & Brand.Brand<"SessionID">
@@ -479,7 +500,7 @@ export default define({
 
                 const sessionScoped = async () => {
                   const outcome = await Effect.runPromiseExit(ctx.session.generate({ sessionID, prompt }))
-                  if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
+                  if (Exit.isFailure(outcome)) throw toConsolidationError(outcome.cause)
                   return String(outcome.value?.text ?? "").trim()
                 }
 
@@ -521,7 +542,7 @@ export default define({
                   const outcome = await Effect.runPromiseExit(
                     ctx.experimental.generate.text(model ? { prompt, model } : { prompt }),
                   )
-                  if (Exit.isFailure(outcome)) throw new Error(Cause.pretty(outcome.cause))
+                  if (Exit.isFailure(outcome)) throw toConsolidationError(outcome.cause)
                   return String(outcome.value?.text ?? "").trim()
                 }
                 try {
