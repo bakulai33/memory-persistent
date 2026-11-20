@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { emptyMemory, addActivity, type PendingTurn } from "../src/storage"
-import { addPendingTurn, appendNote, collectDelta, applyDelta, retryOnce, isRetryableError } from "../src/memory"
+import { addPendingTurn, appendNote, collectDelta, applyDelta, retryOnce, isRetryableError, isFallbackEligibleError } from "../src/memory"
 import {
   beginAttempt,
   finishSuccess,
@@ -186,5 +186,34 @@ describe("retry predicate (T2.4)", () => {
     }
     await expect(retryOnce(run)).resolves.toBe("ok")
     expect(calls).toBe(2)
+  })
+})
+
+describe("fallback eligibility (v0.6.2)", () => {
+  test("status 401, 403, 429 are eligible", () => {
+    expect(isFallbackEligibleError({ status: 401 })).toBe(true)
+    expect(isFallbackEligibleError({ status: 403 })).toBe(true)
+    expect(isFallbackEligibleError({ status: 429 })).toBe(true)
+  })
+
+  test("quota and auth text is eligible", () => {
+    for (const msg of [
+      "HTTP 429: rate limited",
+      "insufficient_quota: check billing",
+      "401 Unauthorized",
+      "invalid api key provided",
+      "403 Forbidden",
+    ]) expect(isFallbackEligibleError(new Error(msg))).toBe(true)
+  })
+
+  test("5xx, network and timeout are not eligible", () => {
+    for (const msg of ["500 Internal Server Error", "network down", "operation timed out"]) {
+      expect(isFallbackEligibleError(new Error(msg))).toBe(false)
+    }
+  })
+
+  test("400 and 404 are not eligible", () => {
+    expect(isFallbackEligibleError({ status: 400 })).toBe(false)
+    expect(isFallbackEligibleError(new Error("404 Not Found"))).toBe(false)
   })
 })

@@ -613,6 +613,30 @@ export function isRetryableError(error: unknown): boolean {
   return RETRYABLE_TEXT_RE.test(text)
 }
 
+const FALLBACK_ELIGIBLE_STATUS = new Set([401, 403, 429])
+const FALLBACK_ELIGIBLE_TEXT_RE =
+  /\b429\b|rate.?limit|quota|unauthorized|\b401\b|forbidden|\b403\b|invalid[ _-]?api[ _-]?key|authentication/i
+
+/**
+ * v0.6.2: an error that should hand the stateless consolidation call off to
+ * the session-scoped generator exactly once. Deliberately narrower than
+ * `isRetryableError`: 5xx/network/timeout are transient (retry in place),
+ * while 400/404 are ordinary request faults and must not trigger a fallback.
+ */
+export function isFallbackEligibleError(error: unknown): boolean {
+  const status =
+    typeof error === "object" && error !== null
+      ? (error as { status?: unknown }).status ?? (error as { statusCode?: unknown }).statusCode
+      : undefined
+  if (typeof status === "number" && Number.isFinite(status)) {
+    return FALLBACK_ELIGIBLE_STATUS.has(status)
+  }
+  const text = String(
+    typeof error === "object" && error !== null && "message" in error ? (error as Error).message : error,
+  )
+  return FALLBACK_ELIGIBLE_TEXT_RE.test(text)
+}
+
 export type ConsolidationDeps = {
   collect: () => Promise<Delta | null>
   generate: (delta: Delta) => Promise<string>
